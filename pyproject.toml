@@ -1,0 +1,21 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "agentos-local"
+version = "0.1.0"
+description = "A lightweight local-first agent runtime for Ollama"
+readme = "README.md"
+requires-python = ">=3.11"
+classifiers = [
+  "Development Status :: 3 - Alpha",
+  "Programming Language :: Python :: 3",
+  "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
+
+[project.scripts]
+agentos = "agentos.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
