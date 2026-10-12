@@ -76,6 +76,9 @@ class Agent:
             for call in calls:
                 fn = call["function"]
                 result = execute_tool(self.tools, fn["name"], fn["arguments"])
-                messages.append({"role": "tool", "tool_name": fn["name"], "content": result})
+                tool_message = {"role": "tool", "tool_name": fn["name"], "content": result}
+                if "id" in call:
+                    tool_message["tool_call_id"] = call["id"]
+                messages.append(tool_message)
                 tool_count += 1
         raise RunLimitError("Model step limit reached")

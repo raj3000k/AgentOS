@@ -6,11 +6,11 @@ Every code change must update this document in the same change. Add a dated chro
 
 ## Goals and scope
 
-Build a lightweight, understandable, local-first Python AI agent framework using Ollama, initially `qwen3:8b`. Provide an SDK, explicit custom tool registration/execution, a CLI, and deterministic offline tests. Prepare for eventual open sourcing without premature infrastructure. The first milestone is a synchronous single-agent runtime; persistent memory, planning, multi-agent coordination, streaming, a web UI, and sandboxed tools are future milestones, not implemented features.
+Build a lightweight, understandable, local-first Python AI agent framework using Ollama, initially `qwen3:8b`. Provide an SDK, explicit custom tool registration/execution, a CLI, and deterministic offline tests. Prepare for eventual open sourcing without premature infrastructure. The first milestone is a synchronous single-agent runtime; persistent memory, planning, multi-agent coordination, streaming and sandboxed tools remain future milestones. A local web UI and optional user-key API providers are now implemented.
 
 ## Architecture
 
-`CLI / Python caller -> Agent.run -> ChatClient -> Ollama /api/chat -> assistant tool calls -> registered Tool.invoke -> tool result messages -> next model turn -> RunResult`.
+`Local browser / CLI / Python caller -> Agent.run -> ChatClient -> Ollama /api/chat or compatible API /chat/completions -> assistant tool calls -> registered Tool.invoke -> tool result messages -> next model turn -> RunResult`.
 
 Each run starts with system and user messages. The runtime preserves assistant messages, appends named tool results, and repeats until a nonempty final answer. All tools in a response execute sequentially. The full batch's wire structure and remaining budget are checked before execution. Tool argument/execution errors become JSON error results so the model can recover. Provider failures and budget exhaustion raise public exceptions. There is no retry of HTTP requests or failed tool functions, avoiding accidental duplicate side effects.
 
@@ -20,6 +20,10 @@ Each run starts with system and user messages. The runtime preserves assistant m
 | --- | --- |
 | `src/agentos/__init__.py` | Public SDK exports |
 | `src/agentos/agent.py` | Agent configuration, bounded loop, RunResult transcript and counts |
+| `src/agentos/providers.py` | Explicit provider factory and stdlib OpenAI-compatible adapter, key validation and tool-call translation |
+| `src/agentos/web.py` | Loopback-only HTTP workspace, input validation, Host/Origin/token checks |
+| `src/agentos/static/{index.html,style.css,app.js}` | Packaged responsive frontend; explicit provider/model/key configuration, settings and execution details |
+| `tests/test_providers_web.py` | Offline compatible transport and web integration/access tests |
 | `src/agentos/ollama.py` | ChatClient protocol and non-streaming HTTP transport |
 | `src/agentos/tools.py` | Decorator, schema generation, strict scalar argument validation, JSON result envelopes |
 | `src/agentos/builtin_tools.py` | Safe two-operand calculator with an explicit operation allowlist |
@@ -38,9 +42,11 @@ Each run starts with system and user messages. The runtime preserves assistant m
 
 The repository now lives at `/Users/rajmotwani/Documents/Projects/AgentOS`. Open this entire folder in VS Code and use its integrated terminal.
 
-Requires Python 3.11+ and a running Ollama instance with `qwen3:8b`. Create a virtual environment, install editable with `python -m pip install -e .`, and run `agentos run "Use the calculator to compute 25 * 48"`. If necessary use `ollama serve` and `ollama pull qwen3:8b`. Run tests with `python -m unittest discover -s tests -v`. `python examples/custom_tool.py` demonstrates the SDK. Use `agentos run --help` for model, host, timeout, budgets, and JSON transcript options.
+Requires Python 3.11+. Local inference requires a running Ollama instance with your selected model; API inference requires the selected provider account/key and model ID. Create a virtual environment, install editable with `python -m pip install -e .`, and run `agentos run "Use the calculator to compute 25 * 48"`. If necessary use `ollama serve` and `ollama pull qwen3:8b`. Run tests with `python -m unittest discover -s tests -v`. `python examples/custom_tool.py` demonstrates the SDK. Use `agentos run --help` for model, host, timeout, budgets, and JSON transcript options.
 
 On the initial development machine, system `python3` is 3.9.6; the available bundled Python is 3.12.14 at `/Users/rajmotwani/.cache/codex-runtimes/codex-primary-runtime/dependencies/python/bin/python3`. A local `.venv` has been created with this runtime and the project installed editable. From this repository, run `source .venv/bin/activate` before the commands above, or use `.venv/bin/agentos` directly. Ollama is installed and reports `qwen3:8b` already available. These machine-specific paths are setup observations, not application dependencies.
+
+Start the browser workspace with `.venv/bin/agentos serve` (default port 8765; `--port` configurable) and use its printed `http://127.0.0.1:8765` URL. Select Ollama/local model or Gemini, OpenAI, Groq, DeepSeek, or a custom OpenAI-compatible API. API model IDs must be entered explicitly; no cloud default or fallback. CLI adds `--provider`, `--api-key-env` (default `AGENTOS_API_KEY`), and uses `--host` only for Ollama/custom endpoints. API keys come from the selected environment variable, never CLI arguments. Package data includes all frontend files for wheel installations.
 
 ## Design decisions and trust boundary
 
@@ -51,12 +57,16 @@ On the initial development machine, system `python3` is 3.9.6; the available bun
 - Registered Python functions are trusted code running in-process with caller permissions. This is not a sandbox. A malicious or hanging custom tool can escape the intended workflow or block the process; no hard tool timeout, output-allocation cap, or process isolation is claimed. Add isolation before supporting untrusted tools.
 - Default 8 model steps, 16 tool calls; final-step tool batches are not executed because no model step remains to consume their results. Tool count includes failed calls. Normal result envelopes are limited to 16,000 characters; oversized/non-JSON results become errors. HTTP reads cap responses at 2 MB; timeout defaults to 120 seconds per request, not a whole-run deadline.
 - Default host is loopback. Explicit remote hosts are supported and send prompts/results there. Ignore environment proxies and reject redirects; no telemetry or hidden hosted API fallback. Model names are caller configuration, not validated as local-only model tags.
+- API adapter uses text Chat Completions with optional function tools; normalize JSON-string arguments into validated objects and serialize them on subsequent turns. Preserve call IDs and provider metadata (including Gemini signatures), attach tool_call_id to results, reject malformed/truncated/filtered responses, and omit raw provider error bodies. No automatic request retries. Named API endpoints are fixed; custom HTTPS endpoints are explicitly user-selected. HTTP permitted only for loopback compatible endpoints. Native non-compatible APIs are out of scope.
+- Browser server binds only to 127.0.0.1, validates Host/Origin and an unguessable request token, caps request bodies at 64 KB, validates settings, uses an asset allowlist/CSP/no-store, and renders responses with textContent. Local UI Ollama endpoints must use loopback. API keys remain only in page/request memory and clear on provider change/reload; AgentOS stores neither credentials nor transcripts. Same-machine processes are trusted; this is not a public authenticated service. No hard cancellation/concurrency isolation.
 - Each run has fresh in-memory state. JSON CLI output contains the full transcript; callers are responsible for protecting it. No automatic disk logging or persistence.
 - Distribution working name is `agentos-local`, import is `agentos`; registry availability/name conflicts and license selection must be checked before publishing. No package or repository has been published.
 
 ## Current status
 
-Single-agent MVP complete: SDK, registered tools, safe calculator, CLI, tests, CI configuration, and contributor documentation. All 23 offline tests pass on Python 3.12.14; compilation, editable installation, and wheel build pass. Live local `qwen3:8b` calculator verification produced 1200 using exactly one tool call and two model requests. The custom word-count example also returned the expected four words. Git repository initialized on `main`; no remote or commits created. CI is configured but has not run remotely; Python versions other than 3.12 have not been tested locally. License intentionally left undecided for owner selection before public release.
+Single-agent MVP plus local browser workspace and optional Gemini/OpenAI/Groq/DeepSeek/custom compatible API transport complete. All 33 offline tests pass on Python 3.12.14; compilation, editable installation, and wheel build pass. Live local `qwen3:8b` calculator verification produced 1200 using exactly one tool call and two model requests. The custom word-count example also returned the expected four words. Git repository is on `main`; hosting/CI state has not been refreshed during Step 6. CI is configured but has not run remotely; Python versions other than 3.12 have not been tested locally. License intentionally left undecided for owner selection before public release.
+
+API transport is verified using loopback fixtures, not paid/live provider accounts. Model capability/access remains provider-dependent; native Anthropic APIs are not implemented.
 
 Next steps: add SQLite sessions with explicit persistence and migration tests, then streaming events. Sandbox/process isolation is a prerequisite for untrusted custom tools. Do not infer those future capabilities from the project name.
 
@@ -96,3 +106,10 @@ Next steps: add SQLite sessions with explicit persistence and migration tests, t
 - Why: use the user's requested permanent project directory and keep local run commands working after relocation.
 - Impacted files: repository location and `detailed-context.md`; regenerated ignored `.venv/` and packaging metadata. Application source is unchanged. The ignored `work/wheel-env/` is a historical verification environment with old paths; recreate it before reuse.
 - Validation: all 23 tests passed from the new directory; `.venv/bin/agentos --version` returned `AgentOS 0.1.0`.
+
+### 2026-10-13 — Step 6: user-controlled providers and local frontend
+
+- What: added a responsive buildless workspace with explicit Ollama/API selection, user model IDs and in-memory API keys; implemented Gemini, OpenAI, Groq, DeepSeek and custom compatible transports; added CLI/SDK provider configuration. Exposed instructions, calculator toggle, request timeout, execution budgets, answers and completed transcripts. Added loopback-only web serving and package assets.
+- Why: let users choose where inference runs and bring their own keys while preserving the small dependency-free runtime and explicitly registered tool boundary.
+- Impacted files: `src/agentos/{providers,web,agent,cli,__init__}.py`, `src/agentos/static/{index.html,style.css,app.js}`, `pyproject.toml`, `tests/test_providers_web.py`, `README.md`, `SECURITY.md`, `detailed-context.md`.
+- Validation: all 33 offline tests pass, including compatible tool roundtrips with IDs/metadata, malformed-batch nonexecution, key omission, provider failures, actual web local/custom runs, and Host/Origin/token rejection. Python compilation and JavaScript syntax checks pass. Live browser calculator run returned 1200 with one tool call and two model requests in 9.59 seconds. API selection showed required user key/model fields. Wheel build succeeded with HTML/CSS/JS assets included; whitespace checks passed. The initial no-build-isolation wheel attempt lacked setuptools in the local venv; standard isolated packaging succeeded. Official Gemini, OpenAI, Groq and DeepSeek API documentation checked for endpoint/protocol compatibility; no paid/live cloud inference claimed.

@@ -1,8 +1,8 @@
 # AgentOS
 
-A lightweight local-first Python agent framework for Ollama. Start with `qwen3:8b`, register trusted Python functions, and inspect a bounded tool-calling loop.
+A lightweight local-first Python agent framework with a browser workspace, Ollama, and optional user-key API providers. Start with `qwen3:8b`, register trusted Python functions, and inspect a bounded tool-calling loop.
 
-**Status:** early single-agent MVP. No hosted API keys, runtime dependencies, telemetry, or automatic conversation storage. Custom tools run in-process and are not sandboxed.
+**Status:** early single-agent MVP. No runtime dependencies, telemetry, or automatic conversation storage. API providers require your own key and explicit selection. Custom tools run in-process and are not sandboxed.
 
 ## Quick start
 
@@ -28,6 +28,27 @@ python -m unittest discover -s tests -v
 ```
 
 The CLI includes a calculator with `add`, `subtract`, `multiply`, and `divide`. It does not interpret expressions as code. `--json` prints the answer, message transcript, and call counts. Failures go to stderr with exit code 1; interruption returns 130. CLI syntax errors return 2.
+
+## Browser workspace and provider control
+
+```sh
+agentos serve
+```
+
+Open `http://127.0.0.1:8765`. Select **Local · Ollama** and enter an installed model ID, or select **Gemini, OpenAI, Groq, DeepSeek**, or **Custom compatible endpoint** and supply your own API key and model ID. API models are never chosen automatically. Custom endpoints must expose OpenAI-compatible `/chat/completions`; enter the API base URL including its version path. HTTPS is required except for loopback endpoints. Native Anthropic and other incompatible APIs are not supported directly.
+
+The workspace exposes instructions, calculator enablement, request timeout, model-step/tool-call limits, final answers, and completed execution transcripts. Runs are independent and non-streaming. Keys remain in page/request memory, clear on provider changes, and are never written to storage or logs by AgentOS. API prompts and tool results are sent to the selected provider and may incur its charges. There is no automatic fallback. The web server binds only to `127.0.0.1`, rejects other Host/Origin values, and requires a per-server request token. Use the printed URL rather than `localhost`.
+
+CLI API runs read keys from an environment variable, avoiding keys in command arguments:
+
+```sh
+agentos run "Hello" --provider gemini --model YOUR_GEMINI_MODEL --api-key-env GEMINI_API_KEY
+agentos run "Hello" --provider groq --model YOUR_GROQ_MODEL --api-key-env GROQ_API_KEY
+```
+
+Set the named environment variable privately before running. The default key variable is `AGENTOS_API_KEY`. `--host` selects the base URL for `custom` or the Ollama origin; named API providers use fixed endpoints. SDK callers can use `create_client("gemini", api_key=key)` and pass the resulting client to `Agent(model="your-model", client=client)`.
+
+Provider references: [Gemini compatibility](https://ai.google.dev/gemini-api/docs/openai), [OpenAI Chat Completions](https://developers.openai.com/api/reference/resources/chat), [Groq compatibility](https://console.groq.com/docs/openai), [DeepSeek API](https://api-docs.deepseek.com/).
 
 ## Custom tools
 
