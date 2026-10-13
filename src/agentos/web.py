@@ -8,11 +8,10 @@ import time
 import urllib.parse
 
 from .agent import Agent
-from .builtin_tools import calculate
 from .context import generate_context
 from .errors import AgentOSError
 from .providers import PROVIDERS, create_client
-from .web_research import WebResearch, WEB_INSTRUCTIONS
+from .capabilities import catalog, validate_selection, build_capabilities
 
 
 def make_server(port=8765, *, request_token=None):
@@ -46,10 +45,13 @@ def make_server(port=8765, *, request_token=None):
         def do_GET(self):
             if not self.allowed():
                 return self.send(403, {"error": "Open the workspace using its printed loopback URL"})
+            if self.path == "/api/capabilities":
+                return self.send(200, {"capabilities": catalog()})
             if self.path == "/api/providers":
                 return self.send(200, {"providers": PROVIDERS})
             assets = {"/": ("index.html", "text/html; charset=utf-8"),
                       "/app.js": ("app.js", "text/javascript; charset=utf-8"),
+                      "/output.js": ("output.js", "text/javascript; charset=utf-8"),
                       "/style.css": ("style.css", "text/css; charset=utf-8")}
             if self.path not in assets:
                 return self.send(404, {"error": "Not found"})
@@ -93,6 +95,14 @@ def make_server(port=8765, *, request_token=None):
                 research_enabled = data.get("web_research", False)
                 if type(research_enabled) is not bool:
                     raise ValueError("Web research must be true or false")
+                selected = validate_selection(data['capabilities']) if 'capabilities' in data else (
+                    (["web_research"] if research_enabled else []) + (["calculator"] if enabled else []))
+                auto_select = data.get('auto_capabilities', False)
+                if type(auto_select) is not bool:
+                    raise ValueError('Auto selection must be a boolean')
+                directory = data.get('file_directory', '')
+                if not isinstance(directory, str):
+                    raise ValueError('Folder must be text')
                 steps = data.get("max_steps", 16)
                 calls = data.get("max_tool_calls", 24)
                 timeout = data.get("timeout", 120)
@@ -105,25 +115,28 @@ def make_server(port=8765, *, request_token=None):
                 client = create_client(provider, api_key=key, base_url=host, timeout=timeout)
                 if self.path == "/api/context":
                     draft = generate_context(client, model, data.get("description", ""),
-                                             web_research=research_enabled, calculator=enabled)
+                                             web_research=research_enabled, calculator=enabled,
+                                             selected_capabilities=selected, auto_select=auto_select)
+                    selected = draft.get('capabilities', selected)
                     return self.send(200, {"context": draft, "provider": provider, "model": model,
-                                            "capabilities": {"web_research": research_enabled, "calculator": enabled}})
+                                          "selected_capabilities": selected,
+                                          "capability_reasons": draft.get('capability_reasons', {}),
+                                          "capabilities": {"web_research": 'web_research' in selected, "calculator": 'calculator' in selected}})
                 name = data.get("name", "Assistant")
                 if not isinstance(name, str) or not name.strip() or len(name) > 80:
                     raise ValueError("Invalid agent name")
-                tools = [calculate] if enabled else []
-                if research_enabled:
-                    tools.extend(WebResearch().tools)
-                    instructions += "\n\nActual enabled capabilities for this run:\n" + WEB_INSTRUCTIONS
+                tools, capability_context = build_capabilities(selected, directory=directory)
+                if capability_context:
+                    instructions += "\n\nActual enabled capabilities for this run:\n" + capability_context
                 agent = Agent(name=name, model=model, instructions=instructions, client=client,
                               tools=tools, max_steps=steps, max_tool_calls=calls,
-                              finalize_on_limit=research_enabled)
+                              finalize_on_limit=bool(tools))
                 started = time.monotonic()
                 result = agent.run(data.get("prompt", ""))
                 self.send(200, {**asdict(result), "elapsed": round(time.monotonic() - started, 2),
                                 "provider": provider, "model": model})
-            except (ValueError, TypeError, OverflowError):
-                self.send(400, {"error": "Invalid configuration. Check the model, API key, endpoint, prompt and limits."})
+            except (ValueError, TypeError, OverflowError, OSError):
+                self.send(400, {"error": "Invalid configuration. Check model/key, capabilities, chosen folder, optional browser setup and limits."})
             except AgentOSError as exc:
                 self.send(502, {"error": str(exc)})
             except Exception:

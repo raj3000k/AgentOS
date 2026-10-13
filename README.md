@@ -2,7 +2,7 @@
 
 A lightweight local-first Python agent framework with a browser workspace, Ollama, and optional user-key API providers. Start with `qwen3:8b`, register trusted Python functions, and inspect a bounded tool-calling loop.
 
-**Status:** early single-agent MVP. No runtime dependencies, telemetry, or automatic conversation storage. API providers require your own key and explicit selection. Custom tools run in-process and are not sandboxed.
+**Status:** early single-agent MVP. No core runtime dependencies, telemetry, or automatic conversation storage. API providers require your own key and explicit selection. Custom tools run in-process and are not sandboxed.
 
 ## Quick start
 
@@ -37,9 +37,9 @@ agentos serve
 
 Open `http://127.0.0.1:8765`. The **Agent studio** turns a short description into an editable agent brief. Open the model connection panel, choose **Run locally** and an installed Ollama model ID, or **Use an API** and **Gemini, OpenAI, Groq, DeepSeek**, or **Custom endpoint**, supplying your own key and model ID. API models are never chosen automatically. Custom endpoints must expose OpenAI-compatible `/chat/completions`; enter the API base URL including its version path. HTTPS is required except for loopback endpoints. Native Anthropic and other incompatible APIs are not supported directly.
 
-Describe an agent in one prompt, such as "An interview coach for backend engineering roles", then choose **Build agent context**. The selected model returns a name, purpose, instructions, starter tasks and assumptions. Review/edit the draft and click **Use this agent** to apply it in the run workspace. Generation uses one model request with no tool execution; the prompt includes the capabilities you selected. Applying a draft restores those user-selected capability settings and does not change your connection. Drafts and active contexts are in page memory only and reset on reload. You can also use the general assistant or write instructions manually. Generated assumptions may need correction. Web research is available only when explicitly enabled; filesystem access and authenticated browser actions are not implemented.
+Describe an agent in one prompt, such as "An interview coach for backend engineering roles", then choose **Build agent context**. The selected model returns a name, purpose, instructions, starter tasks and assumptions. Review/edit the draft and click **Use this agent** to apply it in the run workspace. Generation uses one model request with no tool execution; the prompt includes the fixed capability catalog or your manual selections. Automatic capability selection is enabled by default and returns editable recommendations with reasons. Applying a draft uses the capability selection you reviewed and does not change your connection. Drafts and active contexts are in page memory only and reset on reload. You can also use the general assistant or write instructions manually. Generated assumptions may need correction. Web research is available only when explicitly enabled; filesystem access and authenticated browser actions are not implemented.
 
-The workspace exposes instructions, calculator and Web research enablement, request timeout, model-step/tool-call limits, final answers, and completed execution transcripts. Runs are independent and non-streaming. Keys remain in page/request memory, clear on provider changes, and are never written to storage or logs by AgentOS. API prompts and tool results are sent to the selected provider and may incur its charges. There is no automatic fallback. The web server binds only to `127.0.0.1`, rejects other Host/Origin values, and requires a per-server request token. Use the printed URL rather than `localhost`.
+The workspace exposes instructions, a nine-entry capability catalog, request timeout, model-step/tool-call limits, final answers, and completed execution transcripts. Runs are independent and non-streaming. Keys remain in page/request memory, clear on provider changes, and are never written to storage or logs by AgentOS. API prompts and tool results are sent to the selected provider and may incur its charges. There is no automatic fallback. The web server binds only to `127.0.0.1`, rejects other Host/Origin values, and requires a per-server request token. Use the printed URL rather than `localhost`.
 
 CLI API runs read keys from an environment variable, avoiding keys in command arguments:
 
@@ -52,6 +52,43 @@ Set the named environment variable privately before running. The default key var
 
 Provider references: [Gemini compatibility](https://ai.google.dev/gemini-api/docs/openai), [OpenAI Chat Completions](https://developers.openai.com/api/reference/resources/chat), [Groq compatibility](https://console.groq.com/docs/openai), [DeepSeek API](https://api-docs.deepseek.com/).
 
+## Readable, interactive answers
+
+Answers render a safe Markdown subset: headings, paragraphs, bold/emphasis, inline/fenced code, nested lists, blockquotes, checklists and tables. HTTP(S) links are clickable; raw HTML/images remain inert and unsafe/credential-bearing link schemes are rejected. Rendering does not change the original answer or verify model-provided links.
+
+Tables have filter/search, sortable column headings and **Download CSV** for visible filtered/sorted rows. Code blocks have **Copy code**; checklists can be ticked locally. **Formatted / Raw Markdown** toggles show either view; **Copy Markdown** and **Download .md** preserve the full original answer. Checklist/filter/sort changes are view-only and reset on new runs/reload. Collected tool sources and the execution transcript remain separate.
+
+Preview limits are 100,000 characters/1000 blocks and 300 table rows; raw/download retain the full answer. CSV exports quote values and neutralize leading spreadsheet-formula markers. This is a buildless, dependency-free renderer, not a complete CommonMark parser or syntax highlighter.
+
+## Capability catalog and automatic selection
+
+**Pick capabilities from my description** is on by default. Describe the task, then generate the agent: the selected LLM chooses relevant IDs from the registered catalog and explains each choice. A fixed research recipe supplements web-based job recommendations with company job boards, and adds an available browser reader for LinkedIn/JavaScript/browser tasks; the draft labels these fallback reasons. Review/edit the capability cards in the draft before Use this agent. Selecting a studio capability manually turns automatic selection off; run-workspace cards can be adjusted later. Unknown IDs and unavailable browser selections are rejected. Recommendations never import tools, execute anything during generation, change the model/key, or choose a local folder.
+
+| Capability | What actually runs |
+| --- | --- |
+| Web research | Public search, LinkedIn posting inspection and public page reads |
+| Company job boards | Read-only published Greenhouse/Lever feeds and exact posting/apply URLs |
+| Browser reader | Optional Chromium rendering of public JS pages; clean session and GET-only network |
+| Read local files | List/read supported text/code/CSV/JSON under a user-chosen folder |
+| CSV analysis | Counts, missing data, samples and numeric statistics from supplied CSV |
+| Structured extraction | Deduplicate URLs/emails and inspect supplied JSON |
+| Calculator | Validated two-number arithmetic |
+| Writing & summaries | A model instruction skill, with no external action tools |
+| Code review | A model instruction skill; no shell or code execution |
+
+For file reading, open **Configure** and enter a specific folder. Reads use relative paths, reject traversal/hidden paths/symlinks and credential-like filenames, cap files at 64 KB and returned text at 6000 characters. These filters are not comprehensive secret detection; choose only a folder whose contents you want the selected model to receive. No writes, commands, tests or arbitrary generated code run.
+
+For JavaScript pages, install the optional browser extra (the base package stays dependency-free):
+
+```sh
+python -m pip install -e '.[browser]'
+python -m playwright install chromium
+```
+
+Restart AgentOS after installation so the catalog refreshes availability. Browser tools use a fresh unauthenticated Chromium context; they do not use your Chrome/LinkedIn session. Page scripts may run inside the browser, but all routed HTTP resources are fetched with the public DNS-pinned reader: GET only, no cookies/Authorization forwarded, no websocket/service-worker traffic, and no forms/clicks/downloads. Browser JS data endpoints that require POST may remain unreadable. Budgets: 40 resource requests/8 MB total per browser toolset/run, 2 MB/resource, 1 MB rendered HTML; a 25-second resource scheduling window plus operation timeouts, not a hard process deadline. Unsupported/blocked/login pages remain explicit limitations.
+
+CLI: repeat `--capability` with catalog IDs, and use `--file-directory` for file_reading. `--web-research` remains an alias; `--no-tools` conflicts with explicitly requested capabilities. SDK: `tools, instructions = build_capabilities(["data_analysis", "structured_extraction"])`, importing the builder from `agentos`, then pass both to Agent. Only fixed registered functions may execute.
+
 ## Read-only web research
 
 Enable **Web research** in Agent studio, or choose **Job researcher** to fill an example description and enable it. Generate/edit the brief, click **Use this agent**, then ask for specific roles and exact application links. Existing agents can enable it under **Tools & execution limits**. Disabled web tools cannot execute, regardless of generated instructions.
@@ -61,9 +98,11 @@ Registered tools:
 - `search_linkedin_jobs(keywords, location, limit=5, start=0)`: public LinkedIn search candidates, with title/company/location and canonical job URLs. Search results may include unrelated roles; the agent must inspect matching openings.
 - `inspect_linkedin_job(url)`: read a specific posting and extract a public external application URL. Distinguish `external_link_found`, `linkedin_easy_apply`, `login_required`, `not_exposed`, `closed`, and unavailable pages. Never infer a hidden destination.
 - `search_web(query, limit=5)`: public Bing RSS search for matching company postings when LinkedIn hides an apply URL. Results are unverified until inspected; this endpoint is best-effort, not a guaranteed search API.
-- `read_web_page(url)`: public company/job page text, links and application anchors. No JavaScript rendering, sign-in, cookies, CAPTCHA bypass or form submissions.
+- `read_web_page(url)`: public company/job page text, links and application anchors. This HTTP-only tool has no JavaScript rendering, sign-in, cookies, CAPTCHA bypass or form submissions. Use the separate optional Browser reader for rendering.
 
 The workspace defaults to 16 total model requests and 24 tool calls; limits remain editable. Research reserves the final request for an answer instead of executing more tools. A batch exceeding the remaining tool budget is skipped as a whole, then summarized within the remaining model budget. If the model ignores the stop instruction or its summary fails, a deterministic partial answer retains collected sources/links and the transcript. The CLI/SDK keep their existing 8/16 defaults; pass `--max-steps 16 --max-tool-calls 24` for larger research runs.
+
+The Company job boards capability adds `search_company_jobs(platform, board, keywords="", location="", limit=5)` and `inspect_company_job(url)`. Supported platforms are `greenhouse`, `lever`, `lever_eu`; derive the employer board slug from an observed career URL. Exact API publication and application links can avoid hidden LinkedIn destinations for employers using these platforms. This is not a universal job-search index and does not independently establish employer identity or role eligibility. LinkedIn → matching employer page/feed → browser rendering → explicit limitation is the evidence-first fallback path. References: [Greenhouse public job API](https://docs.greenhouse.io/job-board.html), [Lever posting API](https://github.com/lever/postings-api/blob/master/README.md), [Playwright network controls](https://playwright.dev/python/docs/network).
 
 The UI displays clickable **Collected sources & application links** from actual tool messages, alongside the model's answer. Extracted URLs are not automatically declared verified/open; inspect the exact company role, location, requirements and closure notices. Login-hidden external URLs may remain unavailable. LinkedIn can block public HTTP requests and its HTML can change. Queries/page URLs go to LinkedIn, Bing and selected public sites; fetched text is also sent to your selected model provider. Use public, non-sensitive research queries.
 
@@ -104,7 +143,7 @@ Tools must have typed scalar parameters (`str`, `int`, `float`, `bool`) and JSON
 4. Execute registered tools sequentially and append their results.
 5. Repeat until a final answer or an explicit limit/error.
 
-Defaults: 8 model requests, 16 tool calls, 120 seconds per HTTP request. Configure via `Agent(max_steps=..., max_tool_calls=...)` or CLI flags. `OllamaClient(base_url=..., timeout=...)` configures the SDK transport. By default SDK budget failures raise `RunLimitError`; opt-in `Agent(finalize_on_limit=True)` reserves the last allowed request for a tools-disabled summary and preserves collected evidence as a partial result if the summary fails. Research runs in the UI/CLI enable this option. `RunResult.finish_reason` is `completed`, `budget_summary`, or `partial`, with `limit_reason` explaining the exhausted budget. Connection/protocol failures raise `ProviderError` outside the reserved final-summary fallback. No tools execute on the final allowed model request. Prior tool side effects are not rolled back on a later error. Each `run` is independent; memory is not yet implemented.
+Defaults: 8 model requests, 16 tool calls, 120 seconds per HTTP request. Configure via `Agent(max_steps=..., max_tool_calls=...)` or CLI flags. `OllamaClient(base_url=..., timeout=...)` configures the SDK transport. By default SDK budget failures raise `RunLimitError`; opt-in `Agent(finalize_on_limit=True)` reserves the last allowed request for a tools-disabled summary and preserves collected evidence as a partial result if the summary fails. UI/CLI runs with registered tools enable this option. `RunResult.finish_reason` is `completed`, `budget_summary`, or `partial`, with `limit_reason` explaining the exhausted budget. Connection/protocol failures raise `ProviderError` outside the reserved final-summary fallback. No tools execute on the final allowed model request. Prior tool side effects are not rolled back on a later error. Each `run` is independent; memory is not yet implemented.
 
 The default endpoint is `http://localhost:11434`. `--host` explicitly selects another endpoint; prompts and tool results then go there. Proxy environment variables and redirects are disabled. Choose a locally installed model to keep inference local.
 

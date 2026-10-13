@@ -3,6 +3,9 @@ let provider = 'ollama';
 const selections = {};
 let running = false;
 let draft = null;
+let rawAnswer = '';
+let capabilityCatalog = [];
+let catalogReady = false;
 let activePurpose = 'A general assistant, ready for your task.';
 const setStatus = (id, text, error = false) => { $(id).textContent = text; $(id).className = error ? 'status error' : 'status'; };
 function showView(view) {
@@ -61,6 +64,7 @@ function connectionPayload() {
 async function request(path, payload, statusId, pending) {
   running = true;
   const controls = [...document.querySelectorAll('input,textarea,button')];
+  const previouslyDisabled = new Set(controls.filter(control => control.disabled));
   controls.forEach(control => control.disabled = true);
   document.querySelectorAll('main').forEach(element => element.setAttribute('aria-busy', 'true'));
   setStatus(statusId, pending);
@@ -72,8 +76,37 @@ async function request(path, payload, statusId, pending) {
   } finally {
     payload.api_key = '';
     running = false;
-    controls.forEach(control => control.disabled = false);
+    controls.forEach(control => control.disabled = previouslyDisabled.has(control));
     document.querySelectorAll('main').forEach(element => element.setAttribute('aria-busy', 'false'));
+  }
+}
+function selectedCapabilities(containerId) {
+  return [...$(containerId).querySelectorAll('input:checked')].map(input => input.dataset.capability);
+}
+function renderCapabilities(containerId, selected = [], reasons = {}) {
+  $(containerId).replaceChildren();
+  for (const capability of capabilityCatalog) {
+    const label = document.createElement('label');
+    label.className = 'capability-option';
+    const input = document.createElement('input');
+    input.type = 'checkbox';
+    input.dataset.capability = capability.id;
+    input.checked = selected.includes(capability.id);
+    input.disabled = !capability.available;
+    input.addEventListener('change', () => {
+      if (containerId === 'studio-capabilities') $('auto-capabilities').checked = false;
+    });
+    const copy = document.createElement('span');
+    const title = document.createElement('strong');
+    title.textContent = capability.label;
+    const detail = document.createElement('small');
+    detail.textContent = reasons[capability.id] || capability.description;
+    const kind = document.createElement('small');
+    kind.className = 'capability-kind';
+    kind.textContent = !capability.available ? capability.setup : capability.kind === 'skill' ? 'Model skill · no external action' : capability.requires_folder ? 'Tools · choose a folder before running' : 'Registered tools';
+    copy.append(title, detail, kind);
+    label.append(input, copy);
+    $(containerId).append(label);
   }
 }
 function renderDraft(context, source) {
@@ -88,6 +121,7 @@ function renderDraft(context, source) {
     item.textContent = assumption;
     $('draft-assumptions').append(item);
   }
+  renderCapabilities('draft-capabilities', draft.selected_capabilities, draft.capability_reasons);
   $('draft').hidden = false;
   $('draft-name').focus({ preventScroll: true });
 }
@@ -110,14 +144,16 @@ for (const button of document.querySelectorAll('[data-mode]')) button.addEventLi
 for (const button of document.querySelectorAll('[data-provider]')) button.addEventListener('click', () => chooseProvider(button.dataset.provider));
 $('model').addEventListener('input', updateConnectionLabel);
 $('clear-key').addEventListener('click', () => { $('api-key').value = ''; });
-for (const button of document.querySelectorAll('[data-description]')) button.addEventListener('click', () => { $('description').value = button.dataset.description; if (button.dataset.web === 'true') $('studio-web-research').checked = true; $('description').focus(); });
+for (const button of document.querySelectorAll('[data-description]')) button.addEventListener('click', () => { $('description').value = button.dataset.description; $('auto-capabilities').checked = true; $('description').focus(); });
 $('context-form').addEventListener('submit', async event => {
   event.preventDefault();
   if (running || !validateConnection()) return;
+  if (!catalogReady) { setStatus('context-status', 'Wait for the capability catalog to load.', true); return; }
   $('generate').textContent = 'Building context…';
   try {
-    const result = await request('/api/context', { ...connectionPayload(), description: $('description').value, web_research: $('studio-web-research').checked, calculator: $('studio-calculator').checked }, 'context-status', `Building your brief with ${$('model').value}…`);
-    result.context.capabilities = result.capabilities;
+    const result = await request('/api/context', { ...connectionPayload(), description: $('description').value, auto_capabilities: $('auto-capabilities').checked, capabilities: selectedCapabilities('studio-capabilities') }, 'context-status', `Building your brief with ${$('model').value}…`);
+    result.context.selected_capabilities = result.selected_capabilities;
+    result.context.capability_reasons = result.capability_reasons;
     renderDraft(result.context, `${result.provider} / ${result.model}`);
     setStatus('context-status', 'Your draft is ready. Edit it, then use this agent when you are ready.');
   } catch (error) { setStatus('context-status', error.message || 'Could not reach the local workspace.', true); }
@@ -131,8 +167,7 @@ $('apply-context').addEventListener('click', () => {
     setStatus('context-status', 'Add a name, purpose and context before applying this draft.', true);
     return;
   }
-  $('web-research').checked = draft.capabilities.web_research;
-  $('calculator').checked = draft.capabilities.calculator;
+  renderCapabilities('run-capabilities', selectedCapabilities('draft-capabilities'));
   $('agent-name').value = name;
   $('active-name').textContent = name;
   $('instructions').value = instructions;
@@ -141,11 +176,11 @@ $('apply-context').addEventListener('click', () => {
   $('prompt').value = '';
   $('result').hidden = true;
   renderStarters(draft.starter_prompts);
-  setStatus('status', 'Agent context applied. Give it a task to start a fresh run.');
+  setStatus('status', selectedCapabilities('run-capabilities').includes('file_reading') && !$('file-directory').value.trim() ? 'Agent applied. Set a file-reading folder in Configure before running.' : 'Agent context applied. Give it a task to start a fresh run.');
   showView('run');
 });
 $('agent-name').addEventListener('input', () => { $('active-name').textContent = $('agent-name').value.trim() || 'Assistant'; });
-$('copy').addEventListener('click', async () => { try { await navigator.clipboard.writeText($('answer').textContent); setStatus('status', 'Answer copied.'); } catch { setStatus('status', 'Select the answer text to copy it.', true); } });
+$('copy').addEventListener('click', async () => { try { await navigator.clipboard.writeText(rawAnswer); setStatus('status', 'Answer copied.'); } catch { setStatus('status', 'Select the answer text to copy it.', true); } });
 function safeLink(url) {
   try {
     const parsed = new URL(url);
@@ -157,9 +192,11 @@ function renderResearchEvidence(messages) {
   let count = 0;
   const seen = new Set();
   for (const message of messages) {
-    if (message.role !== 'tool' || !['inspect_linkedin_job', 'read_web_page'].includes(message.tool_name)) continue;
+    if (message.role !== 'tool' || !['inspect_linkedin_job', 'read_web_page', 'read_browser_page', 'inspect_browser_job', 'search_company_jobs', 'inspect_company_job'].includes(message.tool_name)) continue;
     let record;
     try { const envelope = JSON.parse(message.content); if (!envelope.ok) continue; record = envelope.result; } catch { continue; }
+    const records = Array.isArray(record.jobs) ? record.jobs.map(job => ({...job, checked_at:record.checked_at})) : [record];
+    for (const record of records) {
     const source = safeLink(record.source_url || record.url);
     if (!source || seen.has(source)) continue;
     seen.add(source);
@@ -169,7 +206,7 @@ function renderResearchEvidence(messages) {
     heading.textContent = record.title || 'Inspected page';
     card.append(heading);
     const detail = document.createElement('p');
-    detail.textContent = [record.company, record.location, (record.apply_status || record.status || '').replaceAll('_', ' '), record.checked_at].filter(Boolean).join(' · ');
+    detail.textContent = [record.company || record.company_board, record.location, (record.apply_status || record.status || '').replaceAll('_', ' '), record.checked_at].filter(Boolean).join(' · ');
     card.append(detail);
     const targets = [{label:'Source posting ↗', url:source}, ...[record.application_url, ...(record.application_links || [])].filter(Boolean).map(url => ({label:record.apply_status === 'linkedin_easy_apply' ? 'LinkedIn application ↗' : 'Extracted application link ↗', url}))];
     for (const target of targets) {
@@ -188,6 +225,7 @@ function renderResearchEvidence(messages) {
     card.append(note);
     $('research-items').append(card);
     count++;
+    }
   }
   $('research-evidence').hidden = count === 0;
 }
@@ -205,12 +243,17 @@ $('run-form').addEventListener('submit', async event => {
     setStatus('status', 'Add an agent name and instructions before running.', true);
     return;
   }
-  const payload = { ...connectionPayload(), name: $('agent-name').value.trim(), prompt: $('prompt').value, instructions: $('instructions').value, calculator: $('calculator').checked, web_research: $('web-research').checked, max_steps: Number($('steps').value), max_tool_calls: Number($('calls').value) };
+  if (!catalogReady) { setStatus('status', 'Wait for the capability catalog.', true); return; }
+  if (selectedCapabilities('run-capabilities').includes('file_reading') && !$('file-directory').value.trim()) { $('model-dialog').showModal(); $('file-directory').focus(); return; }
+  const payload = { ...connectionPayload(), name: $('agent-name').value.trim(), prompt: $('prompt').value, instructions: $('instructions').value, capabilities: selectedCapabilities('run-capabilities'), file_directory: $('file-directory').value.trim(), max_steps: Number($('steps').value), max_tool_calls: Number($('calls').value) };
   $('run').textContent = 'Running…';
   $('result').hidden = true;
   try {
     const result = await request('/api/run', payload, 'status', `Running with ${payload.model} / ${payload.provider}. Waiting for the complete answer…`);
-    $('answer').textContent = result.content;
+    rawAnswer = result.content;
+    AgentOSOutput.render($('answer'), rawAnswer);
+    $('raw-answer').textContent = rawAnswer;
+    setAnswerView(false);
     $('metrics').textContent = `${result.provider} / ${result.model} · ${result.model_calls} model requests · ${result.tool_calls} tool calls · ${result.elapsed}s`;
     $('trace').textContent = JSON.stringify(result.messages, null, 2);
     renderResearchEvidence(result.messages);
@@ -221,3 +264,21 @@ $('run-form').addEventListener('submit', async event => {
 });
 chooseProvider('ollama');
 renderStarters(['Use the calculator to compute 25 * 48.', 'Explain embeddings in two simple sentences.']);
+
+fetch('/api/capabilities').then(response => { if (!response.ok) throw new Error(); return response.json(); }).then(data => {
+  capabilityCatalog = data.capabilities;
+  catalogReady = true;
+  renderCapabilities('studio-capabilities', ['calculator']);
+  renderCapabilities('run-capabilities', ['calculator']);
+  $('catalog-status').textContent = 'Automatic selection uses only this registered catalog. Review the chosen capabilities in your draft.';
+}).catch(() => { $('catalog-status').textContent = 'Could not load capabilities. Reload the workspace.'; });
+
+function setAnswerView(raw) {
+  $('answer').hidden = raw;
+  $('raw-answer').hidden = !raw;
+  $('formatted-view').setAttribute('aria-pressed', String(!raw));
+  $('raw-view').setAttribute('aria-pressed', String(raw));
+}
+$('formatted-view').addEventListener('click', () => setAnswerView(false));
+$('raw-view').addEventListener('click', () => setAnswerView(true));
+$('download-answer').addEventListener('click', () => AgentOSOutput.download(rawAnswer, 'agentos-answer.md', 'text/markdown;charset=utf-8'));

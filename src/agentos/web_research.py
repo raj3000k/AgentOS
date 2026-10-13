@@ -62,7 +62,7 @@ def public_url(url: str) -> str:
         raise FetchError("Only public HTTPS URLs on port 443 without credentials are allowed") from None
 
 
-def _download(url: str) -> tuple[int, dict, bytes]:
+def _download(url: str, max_bytes: int = MAX_BYTES) -> tuple[int, dict, bytes]:
     parsed = urllib.parse.urlsplit(public_url(url))
     try:
         addresses = socket.getaddrinfo(parsed.hostname, 443, type=socket.SOCK_STREAM)
@@ -81,9 +81,9 @@ def _download(url: str) -> tuple[int, dict, bytes]:
             response = connection.getresponse()
             status = response.status
             headers = {key.lower(): value for key, value in response.getheaders()}
-            raw = response.read(MAX_BYTES + 1)
-            if len(raw) > MAX_BYTES:
-                raise FetchError("Page exceeds the 512 KB read limit")
+            raw = response.read(max_bytes + 1)
+            if len(raw) > max_bytes:
+                raise FetchError("Page exceeds the configured read limit")
             return status, headers, raw
         finally:
             connection.close()
@@ -202,7 +202,7 @@ def bounded_result(result):
             result[field] = result[field][:len(result[field]) // 2]
             result[field + "_truncated"] = True
             continue
-        field = next((key for key in ("links", "application_links", "results", "jobs") if result.get(key)), None)
+        field = next((key for key in ("links", "application_links", "results", "jobs", "entries", "matches", "sample", "keys") if result.get(key)), None)
         if field:
             result[field].pop()
             result["results_truncated"] = True
@@ -217,13 +217,13 @@ class WebResearch:
         self.tools = [tool(self.search_linkedin_jobs), tool(self.inspect_linkedin_job),
                       tool(self.search_web), tool(self.read_web_page)]
 
-    def fetch(self, url):
+    def fetch(self, url, *, allow_json=False):
         for _ in range(4):
             if self.remaining <= 0:
                 raise FetchError("Web request budget exhausted")
             self.remaining -= 1
             url = public_url(url)
-            status, headers, raw = _download(url)
+            status, headers, raw = _download(url, max_bytes=2_000_000) if allow_json else _download(url)
             if status in (301, 302, 303, 307, 308):
                 location = headers.get("location", "")
                 if not location:
@@ -237,7 +237,7 @@ class WebResearch:
             if status != 200:
                 return {"status": "error", "http_status": status, "url": url, "html": ""}
             content_type = headers.get("content-type", "")
-            if not any(mime in content_type for mime in ("text/html", "text/plain", "application/xml", "text/xml", "application/rss+xml", "application/xhtml+xml")):
+            if not (allow_json and "application/json" in content_type) and not any(mime in content_type for mime in ("text/html", "text/plain", "application/xml", "text/xml", "application/rss+xml", "application/xhtml+xml")):
                 raise FetchError("Only public HTML, text and XML pages are supported")
             if headers.get("content-encoding", "identity") != "identity":
                 raise FetchError("Compressed responses are not supported")

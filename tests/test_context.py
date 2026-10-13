@@ -69,4 +69,5 @@ class ContextTests(unittest.TestCase):
             with helper.post(url, token, {**connection, "name": context["name"],
                              "instructions": context["instructions"], "prompt": context["starter_prompts"][0]}) as response:
                 self.assertEqual(json.load(response)["content"], "Let's practice.")
-            self.assertEqual(requests[1][1]["messages"][0]["content"], context["instructions"])
+            self.assertTrue(requests[1][1]["messages"][0]["content"].startswith(context["instructions"]))
+            self.assertIn("calculate", requests[1][1]["messages"][0]["content"])
