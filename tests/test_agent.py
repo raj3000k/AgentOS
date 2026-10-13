@@ -98,3 +98,55 @@ class AgentTests(unittest.TestCase):
                 Agent(**kwargs)
         with self.assertRaises(ValueError):
             Agent().run(" ")
+
+
+class FinalizationTests(unittest.TestCase):
+    def test_reserves_final_turn_within_total_request_budget(self):
+        client = FakeClient(assistant(calls=[call()]), assistant(calls=[call(arguments={"n": 3})]), assistant("Collected 4 and 6; search incomplete."))
+        result = Agent(tools=[double], client=client, max_steps=3, finalize_on_limit=True).run("Research")
+        self.assertEqual((result.model_calls, result.tool_calls), (3, 2))
+        self.assertEqual(result.finish_reason, "budget_summary")
+        self.assertEqual(result.limit_reason, "model_steps")
+        self.assertEqual(client.requests[-1]["tools"], [])
+        self.assertIn("Tools are now disabled", client.requests[-1]["messages"][-1]["content"])
+
+    def test_ignored_finalization_never_executes_more_tools(self):
+        client = FakeClient(assistant(calls=[call()]), assistant(calls=[call(arguments={"n": 99})]))
+        result = Agent(tools=[double], client=client, max_steps=2, finalize_on_limit=True).run("Research")
+        self.assertEqual(result.finish_reason, "partial")
+        self.assertEqual(result.tool_calls, 1)
+        self.assertIn("double: 4", result.content)
+        self.assertEqual(len([message for message in result.messages if message.get("tool_calls")]), 1)
+
+    def test_oversized_tool_batch_is_not_executed_or_left_pending(self):
+        client = FakeClient(assistant(calls=[call(), call()]), assistant("No evidence collected."))
+        result = Agent(tools=[double], client=client, max_steps=4, max_tool_calls=1, finalize_on_limit=True).run("Research")
+        self.assertEqual(result.tool_calls, 0)
+        self.assertEqual(result.model_calls, 2)
+        self.assertEqual(result.limit_reason, "tool_calls")
+        self.assertFalse(any(message.get("tool_calls") for message in result.messages))
+
+    def test_summary_provider_failure_retains_collected_results(self):
+        class FailingClient(FakeClient):
+            def chat(self, **kwargs):
+                if self.requests:
+                    raise ProviderError("Summary request failed")
+                return super().chat(**kwargs)
+        result = Agent(tools=[double], client=FailingClient(assistant(calls=[call()])), max_steps=2,
+                       finalize_on_limit=True).run("Research")
+        self.assertEqual(result.finish_reason, "partial")
+        self.assertEqual(result.model_calls, 2)
+        self.assertIn("double: 4", result.content)
+
+    def test_single_request_budget_and_normal_success(self):
+        malformed = {"role": "assistant", "content": "Summary", "tool_calls": None}
+        partial = Agent(client=FakeClient(malformed), max_steps=1, finalize_on_limit=True).run("Research")
+        self.assertEqual(partial.finish_reason, "partial")
+        client = FakeClient(assistant(calls=[call()]))
+        result = Agent(tools=[double], client=client, max_steps=1, finalize_on_limit=True).run("Research")
+        self.assertEqual(result.tool_calls, 0)
+        self.assertIn("No successful tool results", result.content)
+        self.assertEqual(len(client.requests), 1)
+        result = Agent(client=FakeClient(assistant("Done")), finalize_on_limit=True).run("Hello")
+        self.assertEqual(result.finish_reason, "completed")
+        self.assertIsNone(result.limit_reason)

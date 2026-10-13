@@ -2,6 +2,7 @@
 
 from copy import deepcopy
 from dataclasses import dataclass
+import json
 
 from .errors import ProviderError, RunLimitError
 from .ollama import ChatClient, OllamaClient
@@ -14,17 +15,23 @@ class RunResult:
     messages: list[dict]
     model_calls: int
     tool_calls: int
+    finish_reason: str = "completed"
+    limit_reason: str | None = None
 
 
 class Agent:
     def __init__(self, *, name: str = "Assistant", model: str = "qwen3:8b",
                  instructions: str = "You are a helpful assistant. Use tools when appropriate.",
                  tools: list[Tool] | None = None, client: ChatClient | None = None,
-                 max_steps: int = 8, max_tool_calls: int = 16):
+                 max_steps: int = 8, max_tool_calls: int = 16,
+                 finalize_on_limit: bool = False):
         if type(max_steps) is not int or max_steps < 1:
             raise ValueError("max_steps must be a positive integer")
         if type(max_tool_calls) is not int or max_tool_calls < 0:
             raise ValueError("max_tool_calls must be a nonnegative integer")
+        if type(finalize_on_limit) is not bool:
+            raise ValueError("finalize_on_limit must be a boolean")
+        self.finalize_on_limit = finalize_on_limit
         model = model.removeprefix("ollama/").strip()
         if not model or not name.strip():
             raise ValueError("Agent name and model cannot be empty")
@@ -50,8 +57,29 @@ class Agent:
                     {"role": "user", "content": prompt}]
         schemas = [entry.schema() for entry in self.tools.values()]
         tool_count = 0
+        limit_reason = None
         for step in range(1, self.max_steps + 1):
-            message = self.client.chat(model=self.model, messages=deepcopy(messages), tools=schemas)
+            finalizing = self.finalize_on_limit and (limit_reason is not None
+                or step == self.max_steps or tool_count >= self.max_tool_calls)
+            if finalizing:
+                limit_reason = limit_reason or ("model_steps" if step == self.max_steps else "tool_calls")
+                messages.append({"role": "user", "content":
+                    "Execution budget reached. Tools are now disabled. Write the final answer using only "
+                    "evidence already collected. Include exact links and sources when present; clearly "
+                    "mark partial, unverified, blocked or missing results. Do not request more tools or "
+                    "invent information. If nothing was collected, say so."})
+            try:
+                message = self.client.chat(model=self.model, messages=deepcopy(messages),
+                                           tools=[] if finalizing else schemas)
+            except ProviderError:
+                if not finalizing:
+                    raise
+                return self._partial_result(messages, step, tool_count, limit_reason)
+            if finalizing and (not isinstance(message, dict) or message.get("role") != "assistant"
+                               or not isinstance(message.get("tool_calls", []), list)
+                               or message.get("tool_calls") or not isinstance(message.get("content"), str)
+                               or not message["content"].strip()):
+                return self._partial_result(messages, step, tool_count, limit_reason)
             if not isinstance(message, dict) or message.get("role") != "assistant":
                 raise ProviderError("Expected an assistant message")
             content = message.get("content", "")
@@ -64,15 +92,20 @@ class Agent:
                 if (not isinstance(fn, dict) or not isinstance(fn.get("name"), str)
                         or not isinstance(fn.get("arguments"), dict)):
                     raise ProviderError("Malformed tool call; expected function name and arguments object")
-            messages.append(deepcopy(message))
             if not calls:
                 if not content.strip():
                     raise ProviderError("Ollama returned an empty final answer")
-                return RunResult(content, messages, step, tool_count)
+                messages.append(deepcopy(message))
+                return RunResult(content, messages, step, tool_count,
+                                 "budget_summary" if finalizing else "completed", limit_reason)
             if step == self.max_steps:
                 raise RunLimitError("Model step limit reached before a final answer; final batch was not executed")
             if tool_count + len(calls) > self.max_tool_calls:
+                if self.finalize_on_limit:
+                    limit_reason = "tool_calls"
+                    continue
                 raise RunLimitError("Tool call limit exceeded; batch was not executed")
+            messages.append(deepcopy(message))
             for call in calls:
                 fn = call["function"]
                 result = execute_tool(self.tools, fn["name"], fn["arguments"])
@@ -82,3 +115,52 @@ class Agent:
                 messages.append(tool_message)
                 tool_count += 1
         raise RunLimitError("Model step limit reached")
+
+    def _partial_result(self, messages, model_calls, tool_count, limit_reason):
+        lines = ["Partial results: the execution budget was reached and the model did not provide a final summary.",
+                 "Only collected tool evidence is shown below; search candidates are not verified open roles."]
+        collected = 0
+        for message in messages:
+            if message["role"] != "tool":
+                continue
+            try:
+                envelope = json.loads(message["content"])
+            except (ValueError, TypeError):
+                continue
+            if not envelope.get("ok"):
+                lines.append(f"{message.get('tool_name', 'Tool')}: tool returned an error.")
+                continue
+            result = envelope.get("result")
+            if not isinstance(result, dict):
+                lines.append(f"{message.get('tool_name', 'Tool')}: {json.dumps(result)[:1000]}")
+                collected += 1
+                continue
+            records = result.get("jobs") or result.get("results") or [result]
+            if not isinstance(records, list):
+                records = [result]
+            for record in records[:10]:
+                if not isinstance(record, dict):
+                    continue
+                title = record.get("title") or record.get("company") or message.get("tool_name", "Page")
+                source = record.get("source_url") or record.get("url") or result.get("url")
+                state = record.get("apply_status") or record.get("verification") or record.get("status") or "unverified search candidate"
+                lines.append(f"\n{str(title)[:200]} — {str(state)[:100]}")
+                if source:
+                    lines.append(f"Source: {source}")
+                if record.get("application_url"):
+                    lines.append(f"Application destination: {record['application_url']}")
+                application_links = record.get("application_links", [])
+                if not isinstance(application_links, list):
+                    application_links = []
+                for url in application_links[:3]:
+                    lines.append(f"Extracted application destination (unverified): {url}")
+                if record.get("error"):
+                    lines.append(str(record["error"])[:250])
+                collected += 1
+        if not collected:
+            lines.append("No successful tool results were collected. Try a narrower task or increase the configured limits.")
+        content = "\n".join(lines)
+        if len(content) > 14000:
+            content = content[:14000] + "\n[Partial summary truncated; the transcript retains the collected evidence.]"
+        messages.append({"role": "assistant", "content": content})
+        return RunResult(content, messages, model_calls, tool_count, "partial", limit_reason)

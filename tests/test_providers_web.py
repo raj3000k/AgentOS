@@ -20,8 +20,8 @@ def completion(message, finish="stop"):
 
 
 @contextmanager
-def workspace():
-    httpd = make_server(0)
+def workspace(request_token=None):
+    httpd = make_server(0, request_token=request_token)
     thread = threading.Thread(target=httpd.serve_forever, daemon=True)
     thread.start()
     try:
@@ -109,11 +109,11 @@ class ProviderTests(unittest.TestCase):
 
 
 class WebTests(unittest.TestCase):
-    def post(self, url, token, data, origin=None):
+    def post(self, url, token, data, origin=None, path="/api/run"):
         headers = {"Content-Type": "application/json", "X-AgentOS-Token": token}
         if origin:
             headers["Origin"] = origin
-        return urllib.request.urlopen(urllib.request.Request(url + "/api/run",
+        return urllib.request.urlopen(urllib.request.Request(url + path,
             data=json.dumps(data).encode(), headers=headers), timeout=5)
 
     def token(self, url):
@@ -157,3 +157,14 @@ class WebTests(unittest.TestCase):
             with self.assertRaises(urllib.error.HTTPError) as caught:
                 urllib.request.urlopen(request)
             self.assertEqual(caught.exception.code, 403)
+
+
+    def test_trusted_restart_preserves_page_request_token(self):
+        token = "a" * 43
+        with workspace(request_token=token) as url:
+            self.assertEqual(self.token(url), token)
+            with self.assertRaises(urllib.error.HTTPError) as caught:
+                self.post(url, token, {})
+            self.assertEqual(caught.exception.code, 400)
+        with self.assertRaises(ValueError):
+            make_server(0, request_token="short")

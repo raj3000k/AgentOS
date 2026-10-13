@@ -10,6 +10,7 @@ from .agent import Agent
 from .builtin_tools import calculate
 from .errors import AgentOSError
 from .providers import create_client
+from .web_research import WebResearch, WEB_INSTRUCTIONS
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -27,6 +28,7 @@ def main(argv: list[str] | None = None) -> int:
     run.add_argument("--max-tool-calls", type=int, default=16)
     run.add_argument("--instructions", default="You are a helpful assistant. Use calculate for arithmetic.")
     run.add_argument("--no-tools", action="store_true")
+    run.add_argument("--web-research", action="store_true", help="Enable public read-only LinkedIn and web tools")
     run.add_argument("--json", action="store_true", help="Include messages and call counts as JSON")
     serve = commands.add_parser("serve", help="Open the local web workspace")
     serve.add_argument("--port", type=int, default=8765)
@@ -41,9 +43,17 @@ def main(argv: list[str] | None = None) -> int:
             raise ValueError("Select an API model with --model")
         client = create_client(args.provider, base_url=args.host, timeout=args.timeout,
                                api_key="" if args.provider == "ollama" else os.environ.get(args.api_key_env, ""))
-        result = Agent(model=model, instructions=args.instructions,
-                       tools=[] if args.no_tools else [calculate], client=client,
-                       max_steps=args.max_steps, max_tool_calls=args.max_tool_calls).run(args.prompt)
+        if args.no_tools and args.web_research:
+            raise ValueError("--no-tools cannot be combined with --web-research")
+        tools = [] if args.no_tools else [calculate]
+        instructions = args.instructions
+        if args.web_research:
+            tools.extend(WebResearch().tools)
+            instructions += "\n\n" + WEB_INSTRUCTIONS
+        result = Agent(model=model, instructions=instructions,
+                       tools=tools, client=client,
+                       max_steps=args.max_steps, max_tool_calls=args.max_tool_calls,
+                       finalize_on_limit=args.web_research).run(args.prompt)
         print(json.dumps(asdict(result), indent=2) if args.json else result.content)
         return 0
     except (AgentOSError, ValueError) as exc:
