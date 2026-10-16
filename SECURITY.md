@@ -18,7 +18,7 @@ The workspace listens exclusively on IPv4 loopback, validates the exact Host and
 
 User-selected API keys are passed in Authorization headers only to the selected API endpoint. Named providers have fixed endpoints; custom compatible endpoints are user configuration and must use HTTPS unless loopback. Proxy environment variables and redirects are disabled. Keys are not persisted, returned in results, or included in HTTP error bodies by AgentOS; Python/browser memory is not secure key storage. The page retains a key until cleared, provider changes, or reload. Cloud providers receive prompts and tool outputs and apply their own retention, access, and billing policies. There is no provider fallback or automatic discovery/import of tools.
 
-Compatible APIs must support text Chat Completions and function tools when tools are enabled. Truncated/filtered responses and malformed tool batches fail before execution. Provider tool-call IDs and metadata are preserved for subsequent turns. The existing trusted in-process tool limitations remain unchanged. There is no hard run cancellation or concurrency/resource isolation; browser disconnects do not roll back a running request.
+Compatible APIs must support text Chat Completions and function tools when tools are enabled. Truncated/filtered responses and malformed tool batches fail before execution. Provider tool-call IDs and metadata are preserved for subsequent turns. The existing trusted in-process tool limitations remain unchanged. There is no hard run interruption or process/resource isolation; cooperative stopping and browser disconnects do not roll back a running request.
 
 ## Generated agent context
 
@@ -59,3 +59,11 @@ Saved agent data is a validated field allowlist. API keys and file-access direct
 History is off by default and records runs only after the user enables its checkbox. It stores prompts, original transcript/tool outputs, formatted-answer source text and partial/error metadata, which may themselves contain sensitive user-provided content. Excluding the request API-key field is not content secret detection. Credentials intentionally pasted into prompts or returned by trusted tools can appear in an opted-in record. There is no automatic background capture or cross-run memory.
 
 Library reads require the workspace request token and exact Host; saves/deletes use the existing Host/Origin/token checks. UI deletion requires confirmation. SQLite secure_delete is enabled, but filesystem backups or other copies are outside the application's deletion guarantee. No automatic database replacement, cloud synchronization or remote storage is performed. A history-write failure leaves the completed answer usable and reports that saving failed.
+
+## Live execution events and cooperative stop
+
+Streaming run and stop requests require the same Host/Origin/token validation as other mutations. Run IDs are client-generated canonical UUIDs and live only in a per-server locked registry, capped at four active streaming runs and cleared on all exit paths. This cap does not limit legacy JSON/context requests or isolate CPU/memory. No new worker pool, persistent event archive or model-controlled callback is introduced.
+
+SDK lifecycle callbacks and stop predicates are explicitly supplied trusted application functions. Checks before/after model requests and before each registered tool prevent later operations after an observed stop. An in-flight tool/model request cannot be killed; existing per-operation timeouts still apply. Cancellation retains tool evidence in a `cancelled` result, optionally saved through the same opt-in history mechanism. Interrupted transcripts may have unanswered tool calls for the unexecuted remainder of a batch; these transcripts are for inspection, not resumption.
+
+Activity events omit prompts, arguments, returned evidence and model reasoning. The terminal result still contains the normal answer/transcript and must be treated as sensitive. A failed stream write sets the stop flag, but tab closure need not be detected while an operation is blocked. Disconnects do not guarantee an immediately stopped run. No automatic retries are performed.

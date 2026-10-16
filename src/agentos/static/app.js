@@ -2,6 +2,7 @@ const $ = id => document.getElementById(id);
 let provider = 'ollama';
 const selections = {};
 let running = false;
+let activeRunId = null;
 let draft = null;
 let rawAnswer = '';
 let activeSavedId = null;
@@ -76,16 +77,75 @@ async function request(path, payload, statusId, pending) {
   setStatus(statusId, pending);
   try {
     const response = await fetch(path, { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-AgentOS-Token': document.querySelector('meta[name="agentos-token"]').content }, body: JSON.stringify(payload) });
-    const result = await response.json();
+    const result = path === '/api/run/stream' && response.ok ? await readRunStream(response) : await response.json();
     if (!response.ok) throw new Error(result.error || 'Request failed');
     return result;
   } finally {
     payload.api_key = '';
+    activeRunId = null;
+    $('stop-run').hidden = true;
     running = false;
     controls.forEach(control => control.disabled = previouslyDisabled.has(control));
     document.querySelectorAll('main').forEach(element => element.setAttribute('aria-busy', 'false'));
   }
 }
+function recordActivity(text) {
+  const item = document.createElement('li');
+  item.textContent = text;
+  $('activity-items').append(item);
+  while ($('activity-items').children.length > 150) $('activity-items').firstChild.remove();
+  $('activity-current').textContent = text;
+}
+async function readRunStream(response) {
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = '';
+  let result = null;
+  try {
+    while (true) {
+      const {value, done} = await reader.read();
+      buffer += decoder.decode(value, {stream: !done});
+      let end;
+      while ((end = buffer.indexOf('\n')) !== -1) {
+        const line = buffer.slice(0, end);
+        buffer = buffer.slice(end + 1);
+        if (!line.trim()) continue;
+        const event = JSON.parse(line);
+        if (event.type === 'started') {
+          activeRunId = event.run_id;
+          $('stop-run').hidden = false;
+          $('stop-run').disabled = false;
+          $('stop-run').textContent = 'Stop run';
+          recordActivity('Run started.');
+        } else if (event.type === 'model_start') {
+          recordActivity(`Model step ${event.step} of ${event.max_steps}${event.finalizing ? ' · preparing final summary' : ' · waiting for model'}`);
+        } else if (event.type === 'tool_start') {
+          recordActivity(`Using ${event.name}…`);
+        } else if (event.type === 'tool_end') {
+          recordActivity(`${event.name} ${event.ok ? 'finished' : 'returned an error'} · ${event.tool_calls} tool calls`);
+        } else if (event.type === 'result') {
+          result = event.data;
+          recordActivity(result.finish_reason === 'cancelled' ? 'Run stopped. Collected evidence is available below.' : 'Run finished.');
+        } else if (event.type === 'error') {
+          throw new Error(event.data.error || 'Run failed');
+        }
+      }
+      if (done) break;
+    }
+    if (!result) throw new Error('Connection ended before a final result. The run may have stopped; check local history if enabled.');
+    return result;
+  } finally { reader.releaseLock(); }
+}
+$('stop-run').addEventListener('click', async () => {
+  if (!activeRunId) return;
+  $('stop-run').disabled = true;
+  try {
+    const response = await fetch('/api/run/stop', {method: 'POST', headers: {'Content-Type':'application/json', 'X-AgentOS-Token':document.querySelector('meta[name="agentos-token"]').content}, body:JSON.stringify({run_id:activeRunId})});
+    const result = await response.json();
+    if (!response.ok) throw new Error(result.error || 'Could not stop the run');
+    recordActivity(result.stopping ? 'Stop requested. Waiting for the current request or tool to finish; no further steps will start.' : 'Run already finished.');
+  } catch (error) { recordActivity(error.message); $('stop-run').disabled = false; }
+});
 function selectedCapabilities(containerId) {
   return [...$(containerId).querySelectorAll('input:checked')].map(input => input.dataset.capability);
 }
@@ -257,12 +317,17 @@ $('run-form').addEventListener('submit', async event => {
   $('run').textContent = 'Running…';
   $('result').hidden = true;
   try {
-    const result = await request('/api/run', payload, 'status', `Running with ${payload.model} / ${payload.provider}. Waiting for the complete answer…`);
+    $('activity').hidden = false;
+    $('activity-items').replaceChildren();
+    recordActivity('Connecting to the local workspace…');
+    payload.run_id = crypto.randomUUID();
+    const result = await request('/api/run/stream', payload, 'status', `Running with ${payload.model} / ${payload.provider}. Follow the activity below.`);
     showRunResult(result);
     setStatus('status', result.finish_reason === 'completed' || !result.finish_reason ? 'Run complete.' : 'Research budget reached. Showing collected results; the search may be incomplete.');
-    if (result.history_id) setStatus('status', 'Run finished and saved to local history.' + (result.finish_reason !== 'completed' ? ' Results may be partial.' : ''));
+    if (result.finish_reason === 'cancelled') setStatus('status', 'Run stopped. Inspect collected evidence below.');
+    if (result.history_id) setStatus('status', (result.finish_reason === 'cancelled' ? 'Run stopped and saved to local history.' : 'Run finished and saved to local history.') + (result.finish_reason !== 'completed' ? ' Results may be partial.' : ''));
     if (result.history_error) setStatus('status', result.history_error, true);
-  } catch (error) { setStatus('status', error.message || 'Could not reach the local workspace.', true); }
+  } catch (error) { recordActivity('Run ended with an error.'); setStatus('status', error.message || 'Could not reach the local workspace.', true); }
   finally { $('run').textContent = 'Run agent →'; }
 });
 chooseProvider('ollama');

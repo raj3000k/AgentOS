@@ -7,6 +7,8 @@ import secrets
 import sqlite3
 from pathlib import Path
 import time
+import threading
+import uuid
 import urllib.parse
 
 from .agent import Agent
@@ -23,6 +25,9 @@ def make_server(port=8765, *, request_token=None, storage_path=None):
     if not isinstance(token, str) or len(token) < 32 or not token.isascii() or not all(c.isalnum() or c in "-_" for c in token):
         raise ValueError("Invalid workspace request token")
 
+    active_runs = {}
+    active_lock = threading.Lock()
+
     class Handler(BaseHTTPRequestHandler):
         def setup(self):
             super().setup()
@@ -31,7 +36,16 @@ def make_server(port=8765, *, request_token=None, storage_path=None):
         def log_message(self, *args):
             pass
 
+        def stream_event(self, event):
+            try:
+                self.wfile.write((json.dumps(event, allow_nan=False) + "\n").encode())
+                self.wfile.flush()
+            except OSError:
+                self.stop_event.set()
+
         def send(self, status, body, mime="application/json"):
+            if getattr(self, "streaming", False):
+                return self.stream_event({"type": "result" if status == 200 else "error", "data": body})
             if mime == "application/json":
                 body = json.dumps(body, allow_nan=False).encode()
             self.send_response(status)
@@ -89,8 +103,10 @@ def make_server(port=8765, *, request_token=None, storage_path=None):
             if (not self.allowed() or self.headers.get("X-AgentOS-Token") != token
                     or (origin is not None and origin != f"http://127.0.0.1:{self.server.server_port}")):
                 return self.send(403, {"error": "Request rejected; reload the local workspace"})
-            if self.path not in ("/api/run", "/api/context", "/api/agents/save", "/api/agents/delete", "/api/runs/delete"):
+            if self.path not in ("/api/run", "/api/run/stream", "/api/run/stop", "/api/context", "/api/agents/save", "/api/agents/delete", "/api/runs/delete"):
                 return self.send(404, {"error": "Not found"})
+            self.streaming = False
+            active_id = None
             save_history = False
             run_profile = None
             try:
@@ -102,6 +118,15 @@ def make_server(port=8765, *, request_token=None, storage_path=None):
                 data = json.loads(self.rfile.read(size))
                 if not isinstance(data, dict):
                     raise ValueError("Expected an object")
+                if self.path == '/api/run/stop':
+                    run_id = data.get('run_id')
+                    if not isinstance(run_id, str):
+                        raise ValueError('Invalid run ID')
+                    with active_lock:
+                        stop = active_runs.get(run_id)
+                        if stop is not None:
+                            stop.set()
+                    return self.send(200, {'stopping': stop is not None})
                 if self.path in ('/api/agents/save', '/api/agents/delete', '/api/runs/delete'):
                     if store is None:
                         return self.send(503, {"error": "Local storage is disabled"})
@@ -168,8 +193,31 @@ def make_server(port=8765, *, request_token=None, storage_path=None):
                 agent = Agent(name=name, model=model, instructions=instructions, client=client,
                               tools=tools, max_steps=steps, max_tool_calls=calls,
                               finalize_on_limit=bool(tools))
+                prompt = data.get('prompt', '')
+                if not isinstance(prompt, str) or not prompt.strip() or len(prompt) > 20000:
+                    raise ValueError('Invalid prompt')
+                if self.path == '/api/run/stream':
+                    run_id = data.get('run_id')
+                    if not isinstance(run_id, str) or str(uuid.UUID(run_id)) != run_id:
+                        raise ValueError('Invalid run ID')
+                    with active_lock:
+                        if len(active_runs) >= 4 or run_id in active_runs:
+                            return self.send(409, {'error': 'Another run is using this ID or the workspace is busy'})
+                        self.stop_event = threading.Event()
+                        active_runs[run_id] = self.stop_event
+                        active_id = run_id
+                    self.send_response(200)
+                    self.send_header('Content-Type', 'application/x-ndjson')
+                    self.send_header('Cache-Control', 'no-store')
+                    self.send_header('X-Content-Type-Options', 'nosniff')
+                    self.send_header('Connection', 'close')
+                    self.end_headers()
+                    self.close_connection = True
+                    self.streaming = True
+                    self.stream_event({'type': 'started', 'run_id': run_id})
                 started = time.monotonic()
-                result = agent.run(data.get("prompt", ""))
+                result = agent.run(prompt, **({'on_event': self.stream_event, 'should_stop': self.stop_event.is_set}
+                                             if self.streaming else {}))
                 output = {**asdict(result), "elapsed": round(time.monotonic() - started, 2), "provider": provider, "model": model}
                 if store is not None and save_history:
                     try:
@@ -194,6 +242,10 @@ def make_server(port=8765, *, request_token=None, storage_path=None):
                 self.send(502, {"error": error, "history_id": history_id})
             except Exception:
                 self.send(500, {"error": "Run failed unexpectedly"})
+            finally:
+                if active_id is not None:
+                    with active_lock:
+                        active_runs.pop(active_id, None)
 
     return ThreadingHTTPServer(("127.0.0.1", port), Handler)
 

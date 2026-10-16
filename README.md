@@ -39,7 +39,7 @@ Open `http://127.0.0.1:8765`. The **Agent studio** turns a short description int
 
 Describe an agent in one prompt, such as "An interview coach for backend engineering roles", then choose **Build agent context**. The selected model returns a name, purpose, instructions, starter tasks and assumptions. Review/edit the draft and click **Use this agent** to apply it in the run workspace. Generation uses one model request with no tool execution; the prompt includes the fixed capability catalog or your manual selections. Automatic capability selection is enabled by default and returns editable recommendations with reasons. Applying a draft uses the capability selection you reviewed and does not change your connection. Unsaved drafts and active contexts are in page memory only. Use Save agent to keep a profile locally; My library restores it after reload. You can also use the general assistant or write instructions manually. Generated assumptions may need correction. Web research is available only when explicitly enabled; filesystem access and authenticated browser actions are not implemented.
 
-The workspace exposes instructions, a nine-entry capability catalog, request timeout, model-step/tool-call limits, final answers, and completed execution transcripts. Runs are independent and non-streaming. Keys remain in page/request memory, clear on provider changes, and are never written to storage or logs by AgentOS. API prompts and tool results are sent to the selected provider and may incur its charges. There is no automatic fallback. The web server binds only to `127.0.0.1`, rejects other Host/Origin values, and requires a per-server request token. Use the printed URL rather than `localhost`.
+The workspace exposes instructions, a nine-entry capability catalog, request timeout, model-step/tool-call limits, final answers, and completed execution transcripts. Runs are independent. The workspace streams step/tool activity while inference responses themselves remain non-streaming. Keys remain in page/request memory, clear on provider changes, and are never written to storage or logs by AgentOS. API prompts and tool results are sent to the selected provider and may incur its charges. There is no automatic fallback. The web server binds only to `127.0.0.1`, rejects other Host/Origin values, and requires a per-server request token. Use the printed URL rather than `localhost`.
 
 CLI API runs read keys from an environment variable, avoiding keys in command arguments:
 
@@ -51,6 +51,14 @@ agentos run "Hello" --provider groq --model YOUR_GROQ_MODEL --api-key-env GROQ_A
 Set the named environment variable privately before running. The default key variable is `AGENTOS_API_KEY`. `--host` selects the base URL for `custom` or the Ollama origin; named API providers use fixed endpoints. SDK callers can use `create_client("gemini", api_key=key)` and pass the resulting client to `Agent(model="your-model", client=client)`.
 
 Provider references: [Gemini compatibility](https://ai.google.dev/gemini-api/docs/openai), [OpenAI Chat Completions](https://developers.openai.com/api/reference/resources/chat), [Groq compatibility](https://console.groq.com/docs/openai), [DeepSeek API](https://api-docs.deepseek.com/).
+
+## Live activity and stopping
+
+Run workspace shows model-step progress, tool start/completion and tool errors as they happen. Expand **Step by step** to review activity. **Stop run** requests a cooperative stop: the active model request/tool finishes, its tool evidence is retained, and no subsequent step/tool starts after the stop is observed. It does not interrupt a blocked function, undo side effects or avoid charges for a request already sent. Cancelled results expose collected sources and the execution transcript; pending tools in an interrupted batch were not run. Opted-in history saves them as `cancelled`.
+
+The workspace uses token-protected `POST /api/run/stream` (newline-delimited JSON) and `/api/run/stop`; existing `/api/run` JSON clients still work. Up to four streaming runs may be active per server. Activity contains only lifecycle metadata, not prompts, tool arguments, outputs or hidden model reasoning. Failed writes request a stop when detected; merely closing a tab may not be detected until the current operation returns. API credentials remain in request memory only.
+
+SDK: `agent.run(prompt, on_event=callback, should_stop=stop_event.is_set)` provides the same lifecycle metadata and cooperative stop checks. Callbacks are trusted synchronous application functions; exceptions propagate. CLI runs retain their existing behavior. Token-by-token answers, hard interruption, resume and background run reconnection are separate future work.
 
 ## Saved agents and local run history
 
@@ -162,6 +170,6 @@ The default endpoint is `http://localhost:11434`. `--host` explicitly selects an
 
 See [detailed-context.md](detailed-context.md) for architecture, file map, design rationale, status, and chronological changes. **Every code change must update that document in the same change.** See [CONTRIBUTING.md](CONTRIBUTING.md) and [SECURITY.md](SECURITY.md).
 
-Next milestones: streaming/events, explicit conversation sessions, isolated tool workers and hard deadlines, then planning and multi-agent workflows. Keep these separate from the minimal runtime.
+Next milestones: explicit conversation sessions, isolated tool workers and hard deadlines, token streaming, then planning and multi-agent workflows. Keep these separate from the minimal runtime.
 
 This repository is being prepared for open sourcing. A license and final public/package name must be chosen before publication; no license grant is currently supplied. The local distribution name `agentos-local` is provisional.

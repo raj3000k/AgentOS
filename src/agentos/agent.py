@@ -49,16 +49,33 @@ class Agent:
         self.max_steps = max_steps
         self.max_tool_calls = max_tool_calls
 
-    def run(self, prompt: str) -> RunResult:
-        """Run an isolated conversation. No implicit memory persists across calls."""
+    def run(self, prompt: str, *, on_event=None, should_stop=None) -> RunResult:
+        """Run an isolated conversation; optional trusted callbacks observe/stop between operations.
+
+        Events contain lifecycle metadata, never tool arguments or model content.
+        Callbacks run synchronously and their exceptions propagate. Stopping does
+        not interrupt an in-flight call or undo side effects. Cancelled transcripts
+        may include assistant tool calls whose remaining batch was not executed.
+        """
         if not isinstance(prompt, str) or not prompt.strip():
             raise ValueError("Prompt cannot be empty")
+        def emit(kind, **details):
+            if on_event is not None:
+                on_event({"type": kind, **details})
+
+        def cancelled(model_calls, tool_calls):
+            content = "Run stopped at your request. Collected tool results remain available in Inspect execution."
+            messages.append({"role": "assistant", "content": content})
+            return RunResult(content, messages, model_calls, tool_calls, "cancelled", "user_stop")
+
         messages = [{"role": "system", "content": self.instructions},
                     {"role": "user", "content": prompt}]
         schemas = [entry.schema() for entry in self.tools.values()]
         tool_count = 0
         limit_reason = None
         for step in range(1, self.max_steps + 1):
+            if should_stop is not None and should_stop():
+                return cancelled(step - 1, tool_count)
             finalizing = self.finalize_on_limit and (limit_reason is not None
                 or step == self.max_steps or tool_count >= self.max_tool_calls)
             if finalizing:
@@ -68,13 +85,21 @@ class Agent:
                     "evidence already collected. Include exact links and sources when present; clearly "
                     "mark partial, unverified, blocked or missing results. Do not request more tools or "
                     "invent information. If nothing was collected, say so."})
+            emit("model_start", step=step, max_steps=self.max_steps, finalizing=finalizing)
+            if should_stop is not None and should_stop():
+                return cancelled(step - 1, tool_count)
             try:
                 message = self.client.chat(model=self.model, messages=deepcopy(messages),
                                            tools=[] if finalizing else schemas)
             except ProviderError:
+                if should_stop is not None and should_stop():
+                    return cancelled(step, tool_count)
                 if not finalizing:
                     raise
                 return self._partial_result(messages, step, tool_count, limit_reason)
+            emit("model_end", step=step)
+            if should_stop is not None and should_stop():
+                return cancelled(step, tool_count)
             if finalizing and (not isinstance(message, dict) or message.get("role") != "assistant"
                                or not isinstance(message.get("tool_calls", []), list)
                                or message.get("tool_calls") or not isinstance(message.get("content"), str)
@@ -108,12 +133,19 @@ class Agent:
             messages.append(deepcopy(message))
             for call in calls:
                 fn = call["function"]
+                if should_stop is not None and should_stop():
+                    return cancelled(step, tool_count)
+                emit("tool_start", name=fn["name"], tool_calls=tool_count)
+                if should_stop is not None and should_stop():
+                    return cancelled(step, tool_count)
                 result = execute_tool(self.tools, fn["name"], fn["arguments"])
                 tool_message = {"role": "tool", "tool_name": fn["name"], "content": result}
                 if "id" in call:
                     tool_message["tool_call_id"] = call["id"]
                 messages.append(tool_message)
                 tool_count += 1
+                emit("tool_end", name=fn["name"], tool_calls=tool_count,
+                     ok=json.loads(result).get("ok", False))
         raise RunLimitError("Model step limit reached")
 
     def _partial_result(self, messages, model_calls, tool_count, limit_reason):
