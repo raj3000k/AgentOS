@@ -1,9 +1,11 @@
-"""Loopback-only workspace; no credential or conversation persistence."""
+"""Loopback workspace with explicit local agent/run persistence; never API credentials."""
 from dataclasses import asdict
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from importlib.resources import files
 import json
 import secrets
+import sqlite3
+from pathlib import Path
 import time
 import urllib.parse
 
@@ -12,9 +14,11 @@ from .context import generate_context
 from .errors import AgentOSError
 from .providers import PROVIDERS, create_client
 from .capabilities import catalog, validate_selection, build_capabilities
+from .storage import WorkspaceStore, profile_data
 
 
-def make_server(port=8765, *, request_token=None):
+def make_server(port=8765, *, request_token=None, storage_path=None):
+    store = WorkspaceStore(storage_path) if storage_path is not None else None
     token = request_token if request_token is not None else secrets.token_urlsafe(32)
     if not isinstance(token, str) or len(token) < 32 or not token.isascii() or not all(c.isalnum() or c in "-_" for c in token):
         raise ValueError("Invalid workspace request token")
@@ -45,6 +49,25 @@ def make_server(port=8765, *, request_token=None):
         def do_GET(self):
             if not self.allowed():
                 return self.send(403, {"error": "Open the workspace using its printed loopback URL"})
+            if self.path == "/api/workspace":
+                return self.send(200, {"enabled": store is not None})
+            if self.path.startswith(("/api/agents", "/api/runs")):
+                if store is None:
+                    return self.send(503, {"error": "Local storage is disabled"})
+                address = urllib.parse.urlsplit(self.path)
+                parts = address.path.strip('/').split('/')
+                try:
+                    if len(parts) not in (2, 3) or parts[1] not in ('agents', 'runs'):
+                        return self.send(404, {"error": "Not found"})
+                    # Records can contain sensitive prompts: require the same workspace token as writes.
+                    if self.headers.get('X-AgentOS-Token') != token:
+                        return self.send(403, {"error": "Reload the local workspace"})
+                    offset = int(urllib.parse.parse_qs(address.query).get('offset', ['0'])[0])
+                    return self.send(200, {"items": store.list(parts[1], offset=offset)} if len(parts) == 2 else {"item": store.get(parts[1], parts[2])})
+                except KeyError:
+                    return self.send(404, {"error": "Item not found"})
+                except (ValueError, sqlite3.Error):
+                    return self.send(400, {"error": "Could not read workspace item"})
             if self.path == "/api/capabilities":
                 return self.send(200, {"capabilities": catalog()})
             if self.path == "/api/providers":
@@ -66,8 +89,10 @@ def make_server(port=8765, *, request_token=None):
             if (not self.allowed() or self.headers.get("X-AgentOS-Token") != token
                     or (origin is not None and origin != f"http://127.0.0.1:{self.server.server_port}")):
                 return self.send(403, {"error": "Request rejected; reload the local workspace"})
-            if self.path not in ("/api/run", "/api/context"):
+            if self.path not in ("/api/run", "/api/context", "/api/agents/save", "/api/agents/delete", "/api/runs/delete"):
                 return self.send(404, {"error": "Not found"})
+            save_history = False
+            run_profile = None
             try:
                 size = int(self.headers.get("Content-Length", "0"))
                 if not 0 < size <= 65536:
@@ -77,6 +102,16 @@ def make_server(port=8765, *, request_token=None):
                 data = json.loads(self.rfile.read(size))
                 if not isinstance(data, dict):
                     raise ValueError("Expected an object")
+                if self.path in ('/api/agents/save', '/api/agents/delete', '/api/runs/delete'):
+                    if store is None:
+                        return self.send(503, {"error": "Local storage is disabled"})
+                    if self.path == '/api/agents/save':
+                        return self.send(200, {"item": store.save_agent(data.get('profile', {}), data.get('id'))})
+                    store.delete('agents' if '/agents/' in self.path else 'runs', data.get('id'))
+                    return self.send(200, {"deleted": True})
+                save_history = data.get('save_history', False)
+                if type(save_history) is not bool:
+                    raise ValueError('History setting must be a boolean')
                 provider = data.get("provider", "")
                 model = data.get("model", "")
                 key = data.get("api_key", "")
@@ -125,6 +160,8 @@ def make_server(port=8765, *, request_token=None):
                 name = data.get("name", "Assistant")
                 if not isinstance(name, str) or not name.strip() or len(name) > 80:
                     raise ValueError("Invalid agent name")
+                if store is not None and save_history:
+                    run_profile = profile_data({**data, 'capabilities': selected})
                 tools, capability_context = build_capabilities(selected, directory=directory)
                 if capability_context:
                     instructions += "\n\nActual enabled capabilities for this run:\n" + capability_context
@@ -133,12 +170,28 @@ def make_server(port=8765, *, request_token=None):
                               finalize_on_limit=bool(tools))
                 started = time.monotonic()
                 result = agent.run(data.get("prompt", ""))
-                self.send(200, {**asdict(result), "elapsed": round(time.monotonic() - started, 2),
-                                "provider": provider, "model": model})
+                output = {**asdict(result), "elapsed": round(time.monotonic() - started, 2), "provider": provider, "model": model}
+                if store is not None and save_history:
+                    try:
+                        output['history_id'] = store.save_run(run_profile, data.get('prompt', ''), output)
+                    except (ValueError, OSError, sqlite3.Error):
+                        output['history_error'] = 'Answer completed, but could not save history'
+                self.send(200, output)
+            except KeyError:
+                self.send(404, {"error": "Item not found"})
+            except sqlite3.Error:
+                self.send(500, {"error": "Local storage is unavailable"})
             except (ValueError, TypeError, OverflowError, OSError):
                 self.send(400, {"error": "Invalid configuration. Check model/key, capabilities, chosen folder, optional browser setup and limits."})
             except AgentOSError as exc:
-                self.send(502, {"error": str(exc)})
+                error = str(exc)
+                history_id = None
+                if store is not None and save_history and run_profile is not None:
+                    try:
+                        history_id = store.save_run(run_profile, data.get('prompt', ''), error=error)
+                    except (ValueError, OSError, sqlite3.Error):
+                        pass
+                self.send(502, {"error": error, "history_id": history_id})
             except Exception:
                 self.send(500, {"error": "Run failed unexpectedly"})
 
@@ -146,6 +199,10 @@ def make_server(port=8765, *, request_token=None):
 
 
 def serve(port=8765):
-    with make_server(port) as server:
+    try:
+        server = make_server(port, storage_path=Path.cwd() / ".agentos" / "workspace.sqlite3")
+    except sqlite3.Error as exc:
+        raise ValueError("Cannot open local workspace database. Check .agentos/workspace.sqlite3 permissions or restore a valid backup.") from exc
+    with server:
         print(f"AgentOS workspace: http://127.0.0.1:{server.server_port}", flush=True)
         server.serve_forever()

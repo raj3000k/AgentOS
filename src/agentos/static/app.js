@@ -4,6 +4,10 @@ const selections = {};
 let running = false;
 let draft = null;
 let rawAnswer = '';
+let activeSavedId = null;
+let activeStarterPrompts = [];
+let storageEnabled = false;
+const libraryOffsets = {agents:0, runs:0};
 let capabilityCatalog = [];
 let catalogReady = false;
 let activePurpose = 'A general assistant, ready for your task.';
@@ -11,12 +15,14 @@ const setStatus = (id, text, error = false) => { $(id).textContent = text; $(id)
 function showView(view) {
   $('studio-view').hidden = view !== 'studio';
   $('run-view').hidden = view !== 'run';
-  $('page-label').textContent = view === 'studio' ? 'Agent studio' : 'Run workspace';
+  $('library-view').hidden = view !== 'library';
+  $('page-label').textContent = view === 'studio' ? 'Agent studio' : view === 'library' ? 'My library' : 'Run workspace';
   document.querySelectorAll('[data-view]').forEach(button => {
     const selected = button.dataset.view === view;
     button.classList.toggle('active', selected);
     button.setAttribute('aria-pressed', String(selected));
   });
+  if (view === 'library') { libraryOffsets.agents = 0; libraryOffsets.runs = 0; loadLibrary(); }
   window.scrollTo({ top: 0, behavior: 'instant' });
 }
 function updateConnectionLabel() {
@@ -126,6 +132,7 @@ function renderDraft(context, source) {
   $('draft-name').focus({ preventScroll: true });
 }
 function renderStarters(prompts) {
+  activeStarterPrompts = [...prompts];
   $('starter-prompts').replaceChildren();
   for (const prompt of prompts) {
     const button = document.createElement('button');
@@ -167,6 +174,7 @@ $('apply-context').addEventListener('click', () => {
     setStatus('context-status', 'Add a name, purpose and context before applying this draft.', true);
     return;
   }
+  activeSavedId = null;
   renderCapabilities('run-capabilities', selectedCapabilities('draft-capabilities'));
   $('agent-name').value = name;
   $('active-name').textContent = name;
@@ -245,20 +253,15 @@ $('run-form').addEventListener('submit', async event => {
   }
   if (!catalogReady) { setStatus('status', 'Wait for the capability catalog.', true); return; }
   if (selectedCapabilities('run-capabilities').includes('file_reading') && !$('file-directory').value.trim()) { $('model-dialog').showModal(); $('file-directory').focus(); return; }
-  const payload = { ...connectionPayload(), name: $('agent-name').value.trim(), prompt: $('prompt').value, instructions: $('instructions').value, capabilities: selectedCapabilities('run-capabilities'), file_directory: $('file-directory').value.trim(), max_steps: Number($('steps').value), max_tool_calls: Number($('calls').value) };
+  const payload = { ...connectionPayload(), name: $('agent-name').value.trim(), prompt: $('prompt').value, instructions: $('instructions').value, capabilities: selectedCapabilities('run-capabilities'), file_directory: $('file-directory').value.trim(), purpose: activePurpose, starter_prompts: activeStarterPrompts, save_history: $('save-history').checked, max_steps: Number($('steps').value), max_tool_calls: Number($('calls').value) };
   $('run').textContent = 'Running…';
   $('result').hidden = true;
   try {
     const result = await request('/api/run', payload, 'status', `Running with ${payload.model} / ${payload.provider}. Waiting for the complete answer…`);
-    rawAnswer = result.content;
-    AgentOSOutput.render($('answer'), rawAnswer);
-    $('raw-answer').textContent = rawAnswer;
-    setAnswerView(false);
-    $('metrics').textContent = `${result.provider} / ${result.model} · ${result.model_calls} model requests · ${result.tool_calls} tool calls · ${result.elapsed}s`;
-    $('trace').textContent = JSON.stringify(result.messages, null, 2);
-    renderResearchEvidence(result.messages);
-    $('result').hidden = false;
+    showRunResult(result);
     setStatus('status', result.finish_reason === 'completed' || !result.finish_reason ? 'Run complete.' : 'Research budget reached. Showing collected results; the search may be incomplete.');
+    if (result.history_id) setStatus('status', 'Run finished and saved to local history.' + (result.finish_reason !== 'completed' ? ' Results may be partial.' : ''));
+    if (result.history_error) setStatus('status', result.history_error, true);
   } catch (error) { setStatus('status', error.message || 'Could not reach the local workspace.', true); }
   finally { $('run').textContent = 'Run agent →'; }
 });
@@ -282,3 +285,131 @@ function setAnswerView(raw) {
 $('formatted-view').addEventListener('click', () => setAnswerView(false));
 $('raw-view').addEventListener('click', () => setAnswerView(true));
 $('download-answer').addEventListener('click', () => AgentOSOutput.download(rawAnswer, 'agentos-answer.md', 'text/markdown;charset=utf-8'));
+
+function showRunResult(result) {
+    rawAnswer = result.content;
+    AgentOSOutput.render($('answer'), rawAnswer);
+    $('raw-answer').textContent = rawAnswer;
+    setAnswerView(false);
+    $('metrics').textContent = `${result.provider} / ${result.model} · ${result.model_calls} model requests · ${result.tool_calls} tool calls · ${result.elapsed}s`;
+    $('trace').textContent = JSON.stringify(result.messages, null, 2);
+    renderResearchEvidence(result.messages);
+    $('result').hidden = false;
+}
+async function workspaceRequest(path, payload) {
+  const headers = {'X-AgentOS-Token':document.querySelector('meta[name="agentos-token"]').content};
+  if (payload !== undefined) headers['Content-Type'] = 'application/json';
+  const response = await fetch(path, {method:payload === undefined ? 'GET' : 'POST', headers, ...(payload === undefined ? {} : {body:JSON.stringify(payload)})});
+  const result = await response.json();
+  if (!response.ok) throw new Error(result.error || 'Workspace request failed');
+  return result;
+}
+function currentProfile() {
+  return {name:$('agent-name').value.trim(), purpose:activePurpose, instructions:$('instructions').value,
+    capabilities:selectedCapabilities('run-capabilities'), starter_prompts:activeStarterPrompts,
+    provider, model:$('model').value.trim(), base_url:(provider === 'ollama' || provider === 'custom') ? $('endpoint').value.trim() : '',
+    max_steps:Number($('steps').value), max_tool_calls:Number($('calls').value), timeout:Number($('timeout').value)};
+}
+async function saveAgent(asNew = false) {
+  if (running || !storageEnabled) return;
+  const buttons = [$('save-agent'), $('save-agent-copy')];
+  buttons.forEach(button => button.disabled = true);
+  try {
+    const result = await workspaceRequest('/api/agents/save', {profile:currentProfile(), id:asNew ? null : activeSavedId});
+    activeSavedId = result.item.id;
+    setStatus('status', 'Agent saved locally. API keys and file-access folders were not saved.');
+  } catch (error) { setStatus('status', error.message, true); }
+  finally { buttons.forEach(button => button.disabled = false); }
+}
+function loadProfile(profile, id = null) {
+  if (!catalogReady) throw new Error('Wait for the capability catalog to load.');
+  chooseProvider(profile.provider);
+  $('api-key').value = '';
+  $('file-directory').value = '';
+  $('model').value = profile.model;
+  $('endpoint').value = profile.base_url || (profile.provider === 'ollama' ? 'http://localhost:11434' : '');
+  updateConnectionLabel();
+  $('agent-name').value = profile.name;
+  $('active-name').textContent = profile.name;
+  $('instructions').value = profile.instructions;
+  activePurpose = profile.purpose;
+  $('active-purpose').textContent = activePurpose;
+  for (const [key, field] of [['max_steps','steps'],['max_tool_calls','calls'],['timeout','timeout']]) $(field).value = profile[key];
+  const available = profile.capabilities.filter(id => capabilityCatalog.some(entry => entry.id === id && entry.available));
+  renderCapabilities('run-capabilities', available);
+  renderStarters(profile.starter_prompts);
+  activeSavedId = id;
+  $('prompt').value = '';
+  $('result').hidden = true;
+  showView('run');
+  setStatus('status', 'Saved profile loaded. Add an API key or file folder in Configure if required.' + (available.length !== profile.capabilities.length ? ' Unavailable optional capabilities were omitted from this session.' : ''));
+}
+function libraryNode(tag, text, className) {
+  const element = document.createElement(tag);
+  if (text !== undefined) element.textContent = text;
+  if (className) element.className = className;
+  return element;
+}
+async function deleteItem(collection, id, name) {
+  if (!window.confirm(`Delete ${name} from this machine? This cannot be undone.`)) return;
+  try {
+    await workspaceRequest(`/api/${collection}/delete`, {id});
+    if (collection === 'agents' && activeSavedId === id) activeSavedId = null;
+    await loadLibrary();
+    setStatus('library-status', 'Deleted locally.');
+  } catch (error) { setStatus('library-status', error.message, true); }
+}
+async function loadLibrary() {
+  if (!storageEnabled) { setStatus('library-status', 'Local storage is not enabled on this server. Start with agentos serve.'); return; }
+  setStatus('library-status', 'Loading your local library…');
+  try {
+    const [agents, runs] = await Promise.all([workspaceRequest(`/api/agents?offset=${libraryOffsets.agents}`), workspaceRequest(`/api/runs?offset=${libraryOffsets.runs}`)]);
+    $('saved-agents').replaceChildren(); $('saved-runs').replaceChildren();
+    for (const [kind, records] of [['agents',agents.items],['runs',runs.items]]) {
+      $(`${kind}-newer`).disabled = libraryOffsets[kind] === 0;
+      $(`${kind}-older`).disabled = records.length < 50;
+    }
+    for (const agent of agents.items) {
+      const card = libraryNode('article', undefined, 'library-card');
+      card.append(libraryNode('h3', agent.name), libraryNode('p', `Updated ${new Date(agent.updated_at).toLocaleString()}`, 'hint'));
+      const actions = libraryNode('div', undefined, 'library-actions');
+      const open = libraryNode('button', 'Load agent →', 'secondary'); open.type = 'button';
+      open.addEventListener('click', async () => { try { const result = await workspaceRequest(`/api/agents/${agent.id}`); loadProfile(result.item.data, agent.id); } catch (error) { setStatus('library-status', error.message, true); } });
+      const remove = libraryNode('button', 'Delete', 'text-button'); remove.type = 'button'; remove.addEventListener('click', () => deleteItem('agents', agent.id, 'this saved agent'));
+      actions.append(open, remove); card.append(actions); $('saved-agents').append(card);
+    }
+    for (const run of runs.items) {
+      const card = libraryNode('article', undefined, 'library-card');
+      card.append(libraryNode('h3', run.agent_name), libraryNode('p', run.prompt), libraryNode('p', `${new Date(run.created_at).toLocaleString()} · ${run.status.replaceAll('_',' ')}`, 'hint'));
+      const actions = libraryNode('div', undefined, 'library-actions');
+      const open = libraryNode('button', 'Open result →', 'secondary'); open.type = 'button';
+      open.addEventListener('click', async () => {
+        try {
+          const item = (await workspaceRequest(`/api/runs/${run.id}`)).item.data;
+          loadProfile(item.profile);
+          $('prompt').value = item.prompt;
+          if (item.result) { showRunResult(item.result); setStatus('status', 'Saved result reopened. Nothing was rerun. Configure credentials/folder before starting a new task.'); }
+          else setStatus('status', `Saved failed run: ${item.error}`, true);
+        } catch (error) { setStatus('library-status', error.message, true); }
+      });
+      const remove = libraryNode('button', 'Delete', 'text-button'); remove.type = 'button'; remove.addEventListener('click', () => deleteItem('runs', run.id, 'this saved run'));
+      actions.append(open, remove); card.append(actions); $('saved-runs').append(card);
+    }
+    if (!agents.items.length) $('saved-agents').append(libraryNode('p', 'No saved agents yet. Apply or configure an agent, then click Save agent.', 'hint'));
+    if (!runs.items.length) $('saved-runs').append(libraryNode('p', 'No saved runs yet. Enable Save this run to local history before running a task.', 'hint'));
+    setStatus('library-status', 'Stored only in this workspace’s local SQLite database. Browse items 50 at a time with Older/Newer controls.');
+  } catch (error) { setStatus('library-status', error.message, true); }
+}
+$('save-agent').addEventListener('click', () => saveAgent());
+$('save-agent-copy').addEventListener('click', () => saveAgent(true));
+$('refresh-library').addEventListener('click', () => { libraryOffsets.agents = 0; libraryOffsets.runs = 0; loadLibrary(); });
+for (const kind of ['agents','runs']) {
+  $(`${kind}-older`).addEventListener('click', () => { libraryOffsets[kind] += 50; loadLibrary(); });
+  $(`${kind}-newer`).addEventListener('click', () => { libraryOffsets[kind] = Math.max(0, libraryOffsets[kind] - 50); loadLibrary(); });
+}
+fetch('/api/workspace').then(response => response.json()).then(data => {
+  storageEnabled = data.enabled;
+  $('save-agent').disabled = !storageEnabled;
+  $('save-agent-copy').disabled = !storageEnabled;
+  $('save-history').disabled = !storageEnabled;
+}).catch(() => setStatus('status', 'Local library could not be checked; task runs are still available.', true));
