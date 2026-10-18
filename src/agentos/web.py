@@ -11,6 +11,7 @@ import threading
 import uuid
 import urllib.parse
 
+from .conversation import MAX_TURNS, validate_history
 from .agent import Agent
 from .context import generate_context
 from .errors import AgentOSError
@@ -111,8 +112,9 @@ def make_server(port=8765, *, request_token=None, storage_path=None):
             run_profile = None
             try:
                 size = int(self.headers.get("Content-Length", "0"))
-                if not 0 < size <= 65536:
-                    raise ValueError("Request must be between 1 and 65536 bytes")
+                body_limit = 524288 if self.path in ('/api/run', '/api/run/stream') else 65536
+                if not 0 < size <= body_limit:
+                    raise ValueError('Request exceeds the endpoint body limit')
                 if self.headers.get_content_type() != "application/json":
                     raise ValueError("Expected JSON")
                 data = json.loads(self.rfile.read(size))
@@ -193,6 +195,12 @@ def make_server(port=8765, *, request_token=None, storage_path=None):
                 agent = Agent(name=name, model=model, instructions=instructions, client=client,
                               tools=tools, max_steps=steps, max_tool_calls=calls,
                               finalize_on_limit=bool(tools))
+                try:
+                    history = validate_history(data.get('history', []))
+                except ValueError as exc:
+                    return self.send(400, {'error': str(exc)})
+                if len(history) >= MAX_TURNS:
+                    return self.send(400, {'error': 'Conversation has 20 replies. Start a new conversation.'})
                 prompt = data.get('prompt', '')
                 if not isinstance(prompt, str) or not prompt.strip() or len(prompt) > 20000:
                     raise ValueError('Invalid prompt')
@@ -216,7 +224,7 @@ def make_server(port=8765, *, request_token=None, storage_path=None):
                     self.streaming = True
                     self.stream_event({'type': 'started', 'run_id': run_id})
                 started = time.monotonic()
-                result = agent.run(prompt, **({'on_event': self.stream_event, 'should_stop': self.stop_event.is_set}
+                result = agent.run(prompt, history=history, **({'on_event': self.stream_event, 'should_stop': self.stop_event.is_set}
                                              if self.streaming else {}))
                 output = {**asdict(result), "elapsed": round(time.monotonic() - started, 2), "provider": provider, "model": model}
                 if store is not None and save_history:

@@ -93,7 +93,7 @@ class WorkspaceStore:
         data = {'profile': profile_data(profile), 'prompt': prompt}
         if result is not None:
             # Persist only public RunResult fields; never the HTTP request/client configuration.
-            data['result'] = {key: result[key] for key in ('content', 'messages', 'model_calls', 'tool_calls', 'finish_reason', 'limit_reason', 'elapsed', 'provider', 'model') if key in result}
+            data['result'] = {key: result[key] for key in ('content', 'messages', 'model_calls', 'tool_calls', 'finish_reason', 'limit_reason', 'elapsed', 'provider', 'model', 'conversation', 'context_error') if key in result}
             status = result.get('finish_reason', 'completed')
         else:
             data['error'] = str(error)[:500]

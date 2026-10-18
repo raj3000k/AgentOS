@@ -39,7 +39,7 @@ Open `http://127.0.0.1:8765`. The **Agent studio** turns a short description int
 
 Describe an agent in one prompt, such as "An interview coach for backend engineering roles", then choose **Build agent context**. The selected model returns a name, purpose, instructions, starter tasks and assumptions. Review/edit the draft and click **Use this agent** to apply it in the run workspace. Generation uses one model request with no tool execution; the prompt includes the fixed capability catalog or your manual selections. Automatic capability selection is enabled by default and returns editable recommendations with reasons. Applying a draft uses the capability selection you reviewed and does not change your connection. Unsaved drafts and active contexts are in page memory only. Use Save agent to keep a profile locally; My library restores it after reload. You can also use the general assistant or write instructions manually. Generated assumptions may need correction. Web research is available only when explicitly enabled; filesystem access and authenticated browser actions are not implemented.
 
-The workspace exposes instructions, a nine-entry capability catalog, request timeout, model-step/tool-call limits, final answers, and completed execution transcripts. Runs are independent. The workspace streams step/tool activity while inference responses themselves remain non-streaming. Keys remain in page/request memory, clear on provider changes, and are never written to storage or logs by AgentOS. API prompts and tool results are sent to the selected provider and may incur its charges. There is no automatic fallback. The web server binds only to `127.0.0.1`, rejects other Host/Origin values, and requires a per-server request token. Use the printed URL rather than `localhost`.
+The workspace exposes instructions, a nine-entry capability catalog, request timeout, model-step/tool-call limits, final answers, and completed execution transcripts. The workspace retains context within the active conversation; New conversation clears it. The workspace streams step/tool activity while inference responses themselves remain non-streaming. Keys remain in page/request memory, clear on provider changes, and are never written to storage or logs by AgentOS. API prompts and tool results are sent to the selected provider and may incur its charges. There is no automatic fallback. The web server binds only to `127.0.0.1`, rejects other Host/Origin values, and requires a per-server request token. Use the printed URL rather than `localhost`.
 
 CLI API runs read keys from an environment variable, avoiding keys in command arguments:
 
@@ -51,6 +51,26 @@ agentos run "Hello" --provider groq --model YOUR_GROQ_MODEL --api-key-env GROQ_A
 Set the named environment variable privately before running. The default key variable is `AGENTOS_API_KEY`. `--host` selects the base URL for `custom` or the Ollama origin; named API providers use fixed endpoints. SDK callers can use `create_client("gemini", api_key=key)` and pass the resulting client to `Agent(model="your-model", client=client)`.
 
 Provider references: [Gemini compatibility](https://ai.google.dev/gemini-api/docs/openai), [OpenAI Chat Completions](https://developers.openai.com/api/reference/resources/chat), [Groq compatibility](https://console.groq.com/docs/openai), [DeepSeek API](https://api-docs.deepseek.com/).
+
+## Follow-up conversations
+
+After a reply, ask a follow-up in the same composer. Earlier user prompts, answers and completed tool evidence are included in the next request. Expand any turn in the conversation panel to review its formatted answer. **New conversation** clears the active context; changing instructions, capabilities, provider, model or endpoint also starts fresh. Renaming an agent, adjusting limits or configuring credentials/file access does not erase context. Applying/loading another agent starts a new conversation.
+
+Context lives in page memory until reload unless you enable **Save this turn and conversation to local history**. Saving a follow-up saves its whole retained conversation, including earlier unsaved turns. In **My library**, **Open result** views an archive without enabling follow-ups; **Continue conversation** explicitly restores its retained turns. Both are local reads and run no model. Loading still clears API keys and file-access folders: configure them again before sending another task. Old saved runs without conversation data remain viewable and cannot be continued. Each saved turn is a separate snapshot; deleting one does not delete copies included in later snapshots.
+
+Each request has fresh model/tool budgets. Historical calls are never replayed: prior evidence is sent as labeled, potentially stale data. Tools available now come only from current reviewed settings. Earlier file/page contents may remain in retained evidence even when their tools are disabled. Follow-ups send that retained content to the displayed provider, so start a new conversation to exclude it.
+
+Conversations are bounded to 20 replies and 256,000 bytes of serialized retained context. Context is never silently trimmed or summarized. A full context requires **New conversation**; if a new answer exceeds the retention limit, its answer/transcript remain available with an explicit context error. Provider errors preserve the existing conversation for retry. Cancelled/partial replies can be followed up without replaying unfinished tool batches. No automatic recovery of partially returned provider output, embeddings, global memory or server-side background session is implemented.
+
+SDK usage is explicit; calls without `history` still start fresh:
+
+```python
+first = agent.run("Find matching roles")
+if first.conversation is not None:
+    followup = agent.run("Keep only direct application links", history=first.conversation)
+```
+
+`RunResult.conversation` is provider-neutral data; `context_error` explains an answer that cannot be retained. Web run endpoints accept the same validated `history` field. Context is not a security authority: it cannot register tools, restore credentials/folders or introduce system/developer/tool-call fields.
 
 ## Live activity and stopping
 
@@ -65,9 +85,9 @@ SDK: `agent.run(prompt, on_event=callback, should_stop=stop_event.is_set)` provi
 `agentos serve` creates `.agentos/workspace.sqlite3` in the working folder (ignored by Git, database permissions restricted to the current user on POSIX). No extra service or dependency is required.
 
 - In Run workspace, **Save agent** creates a reusable profile, then updates that profile on subsequent saves; **Save as new** makes an independent copy. Instructions, purpose, selected capabilities, starter tasks, provider/model/endpoint and execution limits are saved. API keys and file-reading folders are excluded.
-- Enable **Save this run to local history** before starting a task to retain its prompt, output, full transcript, evidence, counts and completion/partial/error state. It is off by default. Failed provider/run records retain the prompt/profile/error message; an unfinished transcript may be unavailable. Errors are recorded when execution has started; invalid configuration is not archived. Storage failure never discards a completed answer.
+- Enable **Save this turn and conversation to local history** before starting a task to retain its prompt, output, full transcript, evidence, counts and completion/partial/error state. It is off by default. Failed provider/run records retain the prompt/profile/error message; an unfinished transcript may be unavailable. Errors are recorded when execution has started; invalid configuration is not archived. Storage failure never discards a completed answer.
 - **My library** lists saved agents and run records in pages of 50. Load an agent or open a result without contacting a model. Opened results retain formatting/source cards. Loading resets API keys/file access; configure them again before another run. Optional capabilities missing on this machine are omitted from the loaded session with a notice.
-- Delete individual saved agents or runs from the library after the confirmation. Agent deletion does not delete historical run snapshots. History does not inject prior conversations into new runs; each run is independent.
+- Delete individual saved agents or runs from the library after the confirmation. Agent deletion does not delete historical run snapshots. Archives enter active context only through Continue conversation; new conversations start empty.
 
 Saved prompts, instructions and tool outputs may contain sensitive material you supplied or allowed the agent to read. The database is local, not encrypted by AgentOS; protect it like the original files. The request API key field is never stored, but content entered into prompts or returned by tools is not a secret-scanning boundary. To back up the archive, stop AgentOS and copy the database. Newer unsupported schema versions are rejected, not overwritten. SDK/test servers created with `make_server()` keep storage disabled unless `storage_path` is explicitly supplied.
 
@@ -156,13 +176,13 @@ Tools must have typed scalar parameters (`str`, `int`, `float`, `bool`) and JSON
 
 ## Execution model
 
-1. Start a fresh system/user transcript.
+1. Start with current system instructions, explicitly supplied prior turns (if any), and the new user task.
 2. Send messages and tool schemas to Ollama.
 3. Validate the returned tool batch and budgets.
 4. Execute registered tools sequentially and append their results.
 5. Repeat until a final answer or an explicit limit/error.
 
-Defaults: 8 model requests, 16 tool calls, 120 seconds per HTTP request. Configure via `Agent(max_steps=..., max_tool_calls=...)` or CLI flags. `OllamaClient(base_url=..., timeout=...)` configures the SDK transport. By default SDK budget failures raise `RunLimitError`; opt-in `Agent(finalize_on_limit=True)` reserves the last allowed request for a tools-disabled summary and preserves collected evidence as a partial result if the summary fails. UI/CLI runs with registered tools enable this option. `RunResult.finish_reason` is `completed`, `budget_summary`, or `partial`, with `limit_reason` explaining the exhausted budget. Connection/protocol failures raise `ProviderError` outside the reserved final-summary fallback. No tools execute on the final allowed model request. Prior tool side effects are not rolled back on a later error. Each `run` is independent; saved history is an archive, not implicit conversation memory.
+Defaults: 8 model requests, 16 tool calls, 120 seconds per HTTP request. Configure via `Agent(max_steps=..., max_tool_calls=...)` or CLI flags. `OllamaClient(base_url=..., timeout=...)` configures the SDK transport. By default SDK budget failures raise `RunLimitError`; opt-in `Agent(finalize_on_limit=True)` reserves the last allowed request for a tools-disabled summary and preserves collected evidence as a partial result if the summary fails. UI/CLI runs with registered tools enable this option. `RunResult.finish_reason` is `completed`, `budget_summary`, `partial`, or `cancelled`, with `limit_reason` explaining the exhausted budget. Connection/protocol failures raise `ProviderError` outside the reserved final-summary fallback. No tools execute on the final allowed model request. Prior tool side effects are not rolled back on a later error. SDK calls start fresh unless `history` is supplied explicitly; the browser retains only its active conversation.
 
 The default endpoint is `http://localhost:11434`. `--host` explicitly selects another endpoint; prompts and tool results then go there. Proxy environment variables and redirects are disabled. Choose a locally installed model to keep inference local.
 
@@ -170,6 +190,6 @@ The default endpoint is `http://localhost:11434`. `--host` explicitly selects an
 
 See [detailed-context.md](detailed-context.md) for architecture, file map, design rationale, status, and chronological changes. **Every code change must update that document in the same change.** See [CONTRIBUTING.md](CONTRIBUTING.md) and [SECURITY.md](SECURITY.md).
 
-Next milestones: explicit conversation sessions, isolated tool workers and hard deadlines, token streaming, then planning and multi-agent workflows. Keep these separate from the minimal runtime.
+Next milestones: isolated tool workers and hard deadlines, token streaming, then planning and multi-agent workflows. Keep these separate from the minimal runtime.
 
 This repository is being prepared for open sourcing. A license and final public/package name must be chosen before publication; no license grant is currently supplied. The local distribution name `agentos-local` is provisional.

@@ -3,6 +3,9 @@ let provider = 'ollama';
 const selections = {};
 let running = false;
 let activeRunId = null;
+let conversation = [];
+let conversationSettings = null;
+let conversationBlocked = false;
 let draft = null;
 let rawAnswer = '';
 let activeSavedId = null;
@@ -26,6 +29,52 @@ function showView(view) {
   if (view === 'library') { libraryOffsets.agents = 0; libraryOffsets.runs = 0; loadLibrary(); }
   window.scrollTo({ top: 0, behavior: 'instant' });
 }
+function conversationSignature() {
+  return JSON.stringify({provider, model:$('model').value.trim(), endpoint:(provider === 'ollama' || provider === 'custom') ? $('endpoint').value.trim() : '', instructions:$('instructions').value, capabilities:selectedCapabilities('run-capabilities')});
+}
+function updateConversation() {
+  const count = conversation.length;
+  $('conversation-label').textContent = count ? `Conversation · ${count} ${count === 1 ? 'reply' : 'replies'} retained` : 'New conversation';
+  $('conversation-note').textContent = conversationBlocked ? 'Context is full. Start a new conversation to continue.' : count ? 'Your follow-up includes earlier replies and tool evidence. Saving this turn also saves that context.' : 'The first task starts a conversation. Context stays in this page unless you save a run.';
+  $('prompt-label').textContent = count ? 'Follow up with your agent' : 'Give your agent a task';
+  $('prompt').placeholder = count ? 'Refine the answer, ask a question, or request another step…' : 'What would you like your agent to work on?';
+  $('conversation-turns').replaceChildren();
+  // Keep all turns expandable; the latest reply also appears in the answer card.
+  for (const [index, turn] of conversation.entries()) {
+    const details = document.createElement('details');
+    const summary = document.createElement('summary');
+    summary.textContent = `${index + 1}. ${turn.prompt.slice(0, 100)}${turn.prompt.length > 100 ? '…' : ''}`;
+    const prompt = document.createElement('p'); prompt.textContent = turn.prompt;
+    const answer = document.createElement('div'); answer.className = 'formatted-answer';
+    // Render on expansion so a long conversation does not block the workspace.
+    details.addEventListener('toggle', () => { if (details.open && !answer.hasChildNodes()) AgentOSOutput.render(answer, turn.answer); });
+    const note = document.createElement('p'); note.className = 'hint';
+    note.textContent = `${turn.status.replaceAll('_',' ')} · ${turn.evidence.length} historical tool results · may be stale`;
+    details.append(summary, prompt, answer, note);
+    $('conversation-turns').append(details);
+  }
+  $('conversation-turns').hidden = count === 0;
+}
+function resetChangedConversation() {
+  if (!conversation.length || conversationSettings === conversationSignature()) return;
+  resetConversation(false);
+  setStatus('status', 'Instructions, capabilities or model connection changed. The next task starts a new conversation.');
+}
+function resetConversation(clearPrompt = true) {
+  conversation = [];
+  conversationSettings = null;
+  conversationBlocked = false;
+  $('result').hidden = true;
+  $('activity').hidden = true;
+  if (clearPrompt) $('prompt').value = '';
+  updateConversation();
+}
+$('new-conversation').addEventListener('click', () => {
+  if (running) return;
+  resetConversation();
+  setStatus('status', 'New conversation started. Earlier context will not be sent. Saved runs remain in My library.');
+  $('prompt').focus();
+});
 function updateConnectionLabel() {
   $('connection-label').textContent = `${provider === 'ollama' ? 'Ollama' : provider} / ${$('model').value.trim() || 'Choose a model'}`;
 }
@@ -56,6 +105,7 @@ function chooseProvider(next) {
     button.setAttribute('aria-pressed', String(selected));
   });
   updateConnectionLabel();
+  resetChangedConversation();
 }
 function validateConnection() {
   if (!$('connection-form').checkValidity()) {
@@ -235,6 +285,7 @@ $('apply-context').addEventListener('click', () => {
     return;
   }
   activeSavedId = null;
+  resetConversation();
   renderCapabilities('run-capabilities', selectedCapabilities('draft-capabilities'));
   $('agent-name').value = name;
   $('active-name').textContent = name;
@@ -313,7 +364,15 @@ $('run-form').addEventListener('submit', async event => {
   }
   if (!catalogReady) { setStatus('status', 'Wait for the capability catalog.', true); return; }
   if (selectedCapabilities('run-capabilities').includes('file_reading') && !$('file-directory').value.trim()) { $('model-dialog').showModal(); $('file-directory').focus(); return; }
-  const payload = { ...connectionPayload(), name: $('agent-name').value.trim(), prompt: $('prompt').value, instructions: $('instructions').value, capabilities: selectedCapabilities('run-capabilities'), file_directory: $('file-directory').value.trim(), purpose: activePurpose, starter_prompts: activeStarterPrompts, save_history: $('save-history').checked, max_steps: Number($('steps').value), max_tool_calls: Number($('calls').value) };
+  if (conversation.length && conversationSettings !== conversationSignature()) {
+    resetConversation(false);
+    setStatus('status', 'Agent or connection settings changed. Starting a new conversation with your task.');
+  }
+  if (conversationBlocked || conversation.length >= 20) {
+    setStatus('status', 'Conversation context is full. Choose New conversation before sending another task.', true);
+    return;
+  }
+  const payload = { history:conversation, ...connectionPayload(), name: $('agent-name').value.trim(), prompt: $('prompt').value, instructions: $('instructions').value, capabilities: selectedCapabilities('run-capabilities'), file_directory: $('file-directory').value.trim(), purpose: activePurpose, starter_prompts: activeStarterPrompts, save_history: $('save-history').checked, max_steps: Number($('steps').value), max_tool_calls: Number($('calls').value) };
   $('run').textContent = 'Running…';
   $('result').hidden = true;
   try {
@@ -322,11 +381,17 @@ $('run-form').addEventListener('submit', async event => {
     recordActivity('Connecting to the local workspace…');
     payload.run_id = crypto.randomUUID();
     const result = await request('/api/run/stream', payload, 'status', `Running with ${payload.model} / ${payload.provider}. Follow the activity below.`);
+    if (result.conversation) conversation = result.conversation;
+    conversationBlocked = Boolean(result.context_error) || conversation.length >= 20;
+    conversationSettings = conversationSignature();
+    updateConversation();
+    $('prompt').value = '';
     showRunResult(result);
     setStatus('status', result.finish_reason === 'completed' || !result.finish_reason ? 'Run complete.' : 'Research budget reached. Showing collected results; the search may be incomplete.');
     if (result.finish_reason === 'cancelled') setStatus('status', 'Run stopped. Inspect collected evidence below.');
     if (result.history_id) setStatus('status', (result.finish_reason === 'cancelled' ? 'Run stopped and saved to local history.' : 'Run finished and saved to local history.') + (result.finish_reason !== 'completed' ? ' Results may be partial.' : ''));
     if (result.history_error) setStatus('status', result.history_error, true);
+    if (result.context_error) setStatus('status', `Answer retained. ${result.context_error}`, true);
   } catch (error) { recordActivity('Run ended with an error.'); setStatus('status', error.message || 'Could not reach the local workspace.', true); }
   finally { $('run').textContent = 'Run agent →'; }
 });
@@ -388,6 +453,7 @@ async function saveAgent(asNew = false) {
 }
 function loadProfile(profile, id = null) {
   if (!catalogReady) throw new Error('Wait for the capability catalog to load.');
+  resetConversation();
   chooseProvider(profile.provider);
   $('api-key').value = '';
   $('file-directory').value = '';
@@ -448,17 +514,26 @@ async function loadLibrary() {
       card.append(libraryNode('h3', run.agent_name), libraryNode('p', run.prompt), libraryNode('p', `${new Date(run.created_at).toLocaleString()} · ${run.status.replaceAll('_',' ')}`, 'hint'));
       const actions = libraryNode('div', undefined, 'library-actions');
       const open = libraryNode('button', 'Open result →', 'secondary'); open.type = 'button';
-      open.addEventListener('click', async () => {
+      const openRun = async (resume = false) => {
         try {
           const item = (await workspaceRequest(`/api/runs/${run.id}`)).item.data;
           loadProfile(item.profile);
-          $('prompt').value = item.prompt;
-          if (item.result) { showRunResult(item.result); setStatus('status', 'Saved result reopened. Nothing was rerun. Configure credentials/folder before starting a new task.'); }
+          if (resume) {
+            if (!item.result?.conversation?.length) throw new Error('This run has no retained conversation. Open its result to inspect it, or start a new task.');
+            conversation = item.result.conversation;
+            conversationSettings = conversationSignature();
+            conversationBlocked = conversation.length >= 20;
+            updateConversation();
+          }
+          if (item.result) { showRunResult(item.result); setStatus('status', resume ? 'Conversation loaded. Configure credentials/folder if required. Your next task sends retained context to the displayed model; nothing has run yet.' : 'Saved result reopened for viewing. Use Continue conversation in My library to follow up with retained context.'); }
           else setStatus('status', `Saved failed run: ${item.error}`, true);
-        } catch (error) { setStatus('library-status', error.message, true); }
-      });
+        } catch (error) { setStatus('status', error.message, true); }
+      };
+      open.addEventListener('click', () => openRun());
+      const resume = libraryNode('button', 'Continue conversation ↗', 'text-button'); resume.type = 'button';
+      resume.addEventListener('click', () => openRun(true));
       const remove = libraryNode('button', 'Delete', 'text-button'); remove.type = 'button'; remove.addEventListener('click', () => deleteItem('runs', run.id, 'this saved run'));
-      actions.append(open, remove); card.append(actions); $('saved-runs').append(card);
+      actions.append(open, resume, remove); card.append(actions); $('saved-runs').append(card);
     }
     if (!agents.items.length) $('saved-agents').append(libraryNode('p', 'No saved agents yet. Apply or configure an agent, then click Save agent.', 'hint'));
     if (!runs.items.length) $('saved-runs').append(libraryNode('p', 'No saved runs yet. Enable Save this run to local history before running a task.', 'hint'));
@@ -478,3 +553,8 @@ fetch('/api/workspace').then(response => response.json()).then(data => {
   $('save-agent-copy').disabled = !storageEnabled;
   $('save-history').disabled = !storageEnabled;
 }).catch(() => setStatus('status', 'Local library could not be checked; task runs are still available.', true));
+
+updateConversation();
+
+for (const id of ['instructions','model','endpoint']) $(id).addEventListener('input', resetChangedConversation);
+$('run-capabilities').addEventListener('change', resetChangedConversation);

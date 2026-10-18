@@ -1,9 +1,10 @@
 """Minimal bounded single-agent execution loop."""
 
 from copy import deepcopy
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 import json
 
+from .conversation import MAX_TURNS, validate_history, history_messages, append_turn
 from .errors import ProviderError, RunLimitError
 from .ollama import ChatClient, OllamaClient
 from .tools import Tool, execute_tool
@@ -17,6 +18,8 @@ class RunResult:
     tool_calls: int
     finish_reason: str = "completed"
     limit_reason: str | None = None
+    conversation: list[dict] | None = None
+    context_error: str | None = None
 
 
 class Agent:
@@ -49,9 +52,10 @@ class Agent:
         self.max_steps = max_steps
         self.max_tool_calls = max_tool_calls
 
-    def run(self, prompt: str, *, on_event=None, should_stop=None) -> RunResult:
-        """Run an isolated conversation; optional trusted callbacks observe/stop between operations.
+    def run(self, prompt: str, *, history=None, on_event=None, should_stop=None) -> RunResult:
+        """Run a fresh conversation, or explicitly supply validated prior turns as history.
 
+        History is data-only; prior tool calls are never replayed or permissions restored.
         Events contain lifecycle metadata, never tool arguments or model content.
         Callbacks run synchronously and their exceptions propagate. Stopping does
         not interrupt an in-flight call or undo side effects. Cancelled transcripts
@@ -59,6 +63,16 @@ class Agent:
         """
         if not isinstance(prompt, str) or not prompt.strip():
             raise ValueError("Prompt cannot be empty")
+        history = validate_history([] if history is None else history)
+        if len(history) >= MAX_TURNS:
+            raise ValueError('Conversation has 20 replies. Start a new conversation.')
+
+        def finish(result):
+            try:
+                return replace(result, conversation=append_turn(history, prompt, result))
+            except ValueError as exc:
+                return replace(result, context_error=str(exc))
+
         def emit(kind, **details):
             if on_event is not None:
                 on_event({"type": kind, **details})
@@ -66,10 +80,10 @@ class Agent:
         def cancelled(model_calls, tool_calls):
             content = "Run stopped at your request. Collected tool results remain available in Inspect execution."
             messages.append({"role": "assistant", "content": content})
-            return RunResult(content, messages, model_calls, tool_calls, "cancelled", "user_stop")
+            return finish(RunResult(content, messages, model_calls, tool_calls, "cancelled", "user_stop"))
 
-        messages = [{"role": "system", "content": self.instructions},
-                    {"role": "user", "content": prompt}]
+        messages = ([{"role": "system", "content": self.instructions}]
+                    + history_messages(history) + [{"role": "user", "content": prompt}])
         schemas = [entry.schema() for entry in self.tools.values()]
         tool_count = 0
         limit_reason = None
@@ -96,7 +110,7 @@ class Agent:
                     return cancelled(step, tool_count)
                 if not finalizing:
                     raise
-                return self._partial_result(messages, step, tool_count, limit_reason)
+                return finish(self._partial_result(messages, step, tool_count, limit_reason))
             emit("model_end", step=step)
             if should_stop is not None and should_stop():
                 return cancelled(step, tool_count)
@@ -104,7 +118,7 @@ class Agent:
                                or not isinstance(message.get("tool_calls", []), list)
                                or message.get("tool_calls") or not isinstance(message.get("content"), str)
                                or not message["content"].strip()):
-                return self._partial_result(messages, step, tool_count, limit_reason)
+                return finish(self._partial_result(messages, step, tool_count, limit_reason))
             if not isinstance(message, dict) or message.get("role") != "assistant":
                 raise ProviderError("Expected an assistant message")
             content = message.get("content", "")
@@ -121,8 +135,8 @@ class Agent:
                 if not content.strip():
                     raise ProviderError("Ollama returned an empty final answer")
                 messages.append(deepcopy(message))
-                return RunResult(content, messages, step, tool_count,
-                                 "budget_summary" if finalizing else "completed", limit_reason)
+                return finish(RunResult(content, messages, step, tool_count,
+                                        "budget_summary" if finalizing else "completed", limit_reason))
             if step == self.max_steps:
                 raise RunLimitError("Model step limit reached before a final answer; final batch was not executed")
             if tool_count + len(calls) > self.max_tool_calls:
