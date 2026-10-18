@@ -35,7 +35,7 @@ def profile_data(data):
     if not isinstance(starters, list) or len(starters) > 3 or any(not isinstance(value, str) or len(value) > 500 for value in starters):
         raise ValueError('Invalid starter prompts')
     result['starter_prompts'] = starters
-    for key, default, low, high in [('max_steps', 16, 1, 32), ('max_tool_calls', 24, 0, 64), ('timeout', 120, 1, 300)]:
+    for key, default, low, high in [('max_steps', 16, 1, 32), ('max_tool_calls', 24, 0, 64), ('run_timeout', 300, 5, 1800), ('timeout', 120, 1, 300)]:
         value = data.get(key, default)
         valid_type = type(value) in (int, float) if key == 'timeout' else type(value) is int
         if not valid_type or not math.isfinite(value) or not low <= value <= high:

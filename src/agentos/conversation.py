@@ -4,7 +4,7 @@ import json
 
 MAX_TURNS = 20
 MAX_CONTEXT_BYTES = 256_000
-STATUSES = {'completed', 'budget_summary', 'partial', 'cancelled'}
+STATUSES = {'completed', 'budget_summary', 'partial', 'cancelled', 'timed_out'}
 
 
 def validate_history(history):

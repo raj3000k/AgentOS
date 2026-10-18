@@ -52,7 +52,7 @@ class Agent:
         self.max_steps = max_steps
         self.max_tool_calls = max_tool_calls
 
-    def run(self, prompt: str, *, history=None, on_event=None, should_stop=None) -> RunResult:
+    def run(self, prompt: str, *, history=None, on_event=None, should_stop=None, on_checkpoint=None) -> RunResult:
         """Run a fresh conversation, or explicitly supply validated prior turns as history.
 
         History is data-only; prior tool calls are never replayed or permissions restored.
@@ -72,6 +72,10 @@ class Agent:
                 return replace(result, conversation=append_turn(history, prompt, result))
             except ValueError as exc:
                 return replace(result, context_error=str(exc))
+
+        def checkpoint(model_calls, tool_calls):
+            if on_checkpoint is not None:
+                on_checkpoint({'messages': deepcopy(messages), 'model_calls': model_calls, 'tool_calls': tool_calls})
 
         def emit(kind, **details):
             if on_event is not None:
@@ -99,6 +103,7 @@ class Agent:
                     "evidence already collected. Include exact links and sources when present; clearly "
                     "mark partial, unverified, blocked or missing results. Do not request more tools or "
                     "invent information. If nothing was collected, say so."})
+            checkpoint(step, tool_count)
             emit("model_start", step=step, max_steps=self.max_steps, finalizing=finalizing)
             if should_stop is not None and should_stop():
                 return cancelled(step - 1, tool_count)
@@ -158,6 +163,7 @@ class Agent:
                     tool_message["tool_call_id"] = call["id"]
                 messages.append(tool_message)
                 tool_count += 1
+                checkpoint(step, tool_count)
                 emit("tool_end", name=fn["name"], tool_calls=tool_count,
                      ok=json.loads(result).get("ok", False))
         raise RunLimitError("Model step limit reached")

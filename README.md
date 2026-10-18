@@ -2,7 +2,7 @@
 
 A lightweight local-first Python agent framework with a browser workspace, Ollama, and optional user-key API providers. Start with `qwen3:8b`, register trusted Python functions, and inspect a bounded tool-calling loop.
 
-**Status:** early single-agent MVP. No core runtime dependencies, telemetry, or automatic conversation storage. API providers require your own key and explicit selection. Custom tools run in-process and are not sandboxed.
+**Status:** early single-agent MVP. No core runtime dependencies, telemetry, or automatic conversation storage. API providers require your own key and explicit selection. SDK custom tools run in-process and are not sandboxed. Production workspace agent runs use separate supervised workers with total deadlines; workers keep the same OS permissions.
 
 ## Quick start
 
@@ -72,13 +72,25 @@ if first.conversation is not None:
 
 `RunResult.conversation` is provider-neutral data; `context_error` explains an answer that cannot be retained. Web run endpoints accept the same validated `history` field. Context is not a security authority: it cannot register tools, restore credentials/folders or introduce system/developer/tool-call fields.
 
+## Isolated workspace execution and total deadlines
+
+`agentos serve` executes each agent task in a fresh Python worker process. Under **Tools & execution limits**, **Total run deadline (s)** defaults to 300 seconds and accepts 5–1800 seconds. This covers worker startup, inference and tool execution after configuration validation. It is separate from the per-request transport timeout. The deadline is saved with agent profiles and run snapshots; older profiles default to 300 seconds.
+
+**Stop run** terminates the worker without waiting for its active model/tool operation. A separate watchdog enforces the deadline even if progress delivery is blocked. Completed tool messages received through private checkpoints remain in the answer’s source cards/transcript and can enter saved history and follow-ups. Deadline results are marked `timed_out` / `run_timeout`; user stops remain `cancelled` / `user_stop`. An interrupted operation may have done unreported work, so it is not claimed as complete. No final model call or automatic retry is made after termination.
+
+The supervisor reaps each worker, closes private pipes, and on POSIX terminates its process group, including descendants still in that group. Windows cleanup terminates the direct worker; equivalent descendant cleanup is not guaranteed. Four isolated tasks maximum are active per workspace, including legacy JSON requests. Closing the server requests stop for active workers. Credentials/configuration go through stdin, never command arguments, temp files or worker logs. Worker stderr is discarded; private checkpoints are not exposed as public lifecycle events.
+
+This is execution-lifetime isolation, **not an OS permission sandbox**: workers inherit the current user’s permissions/environment. Only fixed, trusted capabilities run. It does not undo side effects, restrict CPU/memory, or guarantee that Ollama/remote providers stop inference or billing when their client disconnects. Escaped process groups and external services are outside descendant cleanup. Context/brief generation remains a bounded single provider request in the server, with its transport timeout.
+
+SDK `Agent.run` and CLI custom tools retain their trusted in-process behavior. `make_server(..., isolate_runs=True)` opts into the production worker path; the default SDK/test server remains in-process and reports this through `/api/workspace`. The UI hides hard-deadline controls on those servers, and explicit run-deadline requests are rejected there. SDK callbacks may observe trusted `on_checkpoint` snapshots; those contain sensitive messages and are not ordinary public activity events.
+
 ## Live activity and stopping
 
-Run workspace shows model-step progress, tool start/completion and tool errors as they happen. Expand **Step by step** to review activity. **Stop run** requests a cooperative stop: the active model request/tool finishes, its tool evidence is retained, and no subsequent step/tool starts after the stop is observed. It does not interrupt a blocked function, undo side effects or avoid charges for a request already sent. Cancelled results expose collected sources and the execution transcript; pending tools in an interrupted batch were not run. Opted-in history saves them as `cancelled`.
+Run workspace shows model-step progress, tool start/completion and tool errors as they happen. Expand **Step by step** to review activity. **Stop run** terminates the production workspace worker. In-process SDK/test servers retain cooperative stopping, which waits for the active operation. Neither mode undoes side effects or avoids charges for a request already sent. Cancelled results expose collected sources and the execution transcript; pending tools in an interrupted batch were not run. Opted-in history saves them as `cancelled`.
 
-The workspace uses token-protected `POST /api/run/stream` (newline-delimited JSON) and `/api/run/stop`; existing `/api/run` JSON clients still work. Up to four streaming runs may be active per server. Activity contains only lifecycle metadata, not prompts, tool arguments, outputs or hidden model reasoning. Failed writes request a stop when detected; merely closing a tab may not be detected until the current operation returns. API credentials remain in request memory only.
+The workspace uses token-protected `POST /api/run/stream` (newline-delimited JSON) and `/api/run/stop`; existing `/api/run` JSON clients still work. Up to four streaming runs may be active per server; isolated JSON runs share this same cap. Activity contains only lifecycle metadata, not prompts, tool arguments, outputs or hidden model reasoning. Failed writes request a stop when detected; tab closure may remain undetected until the next stream write, but the total deadline still applies to isolated runs. API credentials remain in request memory only.
 
-SDK: `agent.run(prompt, on_event=callback, should_stop=stop_event.is_set)` provides the same lifecycle metadata and cooperative stop checks. Callbacks are trusted synchronous application functions; exceptions propagate. CLI runs retain their existing behavior. Token-by-token answers, hard interruption, resume and background run reconnection are separate future work.
+SDK: `agent.run(prompt, on_event=callback, should_stop=stop_event.is_set)` provides the same lifecycle metadata and cooperative stop checks. Callbacks are trusted synchronous application functions; exceptions propagate. CLI runs retain their existing behavior. Token-by-token answers, true operation resumption and background run reconnection are separate future work.
 
 ## Saved agents and local run history
 
@@ -182,7 +194,7 @@ Tools must have typed scalar parameters (`str`, `int`, `float`, `bool`) and JSON
 4. Execute registered tools sequentially and append their results.
 5. Repeat until a final answer or an explicit limit/error.
 
-Defaults: 8 model requests, 16 tool calls, 120 seconds per HTTP request. Configure via `Agent(max_steps=..., max_tool_calls=...)` or CLI flags. `OllamaClient(base_url=..., timeout=...)` configures the SDK transport. By default SDK budget failures raise `RunLimitError`; opt-in `Agent(finalize_on_limit=True)` reserves the last allowed request for a tools-disabled summary and preserves collected evidence as a partial result if the summary fails. UI/CLI runs with registered tools enable this option. `RunResult.finish_reason` is `completed`, `budget_summary`, `partial`, or `cancelled`, with `limit_reason` explaining the exhausted budget. Connection/protocol failures raise `ProviderError` outside the reserved final-summary fallback. No tools execute on the final allowed model request. Prior tool side effects are not rolled back on a later error. SDK calls start fresh unless `history` is supplied explicitly; the browser retains only its active conversation.
+Defaults: 8 model requests, 16 tool calls, 120 seconds per HTTP request. Configure via `Agent(max_steps=..., max_tool_calls=...)` or CLI flags. `OllamaClient(base_url=..., timeout=...)` configures the SDK transport. By default SDK budget failures raise `RunLimitError`; opt-in `Agent(finalize_on_limit=True)` reserves the last allowed request for a tools-disabled summary and preserves collected evidence as a partial result if the summary fails. UI/CLI runs with registered tools enable this option. `RunResult.finish_reason` is `completed`, `budget_summary`, `partial`, `cancelled`, or `timed_out`, with `limit_reason` explaining the exhausted budget. Connection/protocol failures raise `ProviderError` outside the reserved final-summary fallback. No tools execute on the final allowed model request. Prior tool side effects are not rolled back on a later error. SDK calls start fresh unless `history` is supplied explicitly; the browser retains only its active conversation.
 
 The default endpoint is `http://localhost:11434`. `--host` explicitly selects another endpoint; prompts and tool results then go there. Proxy environment variables and redirects are disabled. Choose a locally installed model to keep inference local.
 
@@ -190,6 +202,6 @@ The default endpoint is `http://localhost:11434`. `--host` explicitly selects an
 
 See [detailed-context.md](detailed-context.md) for architecture, file map, design rationale, status, and chronological changes. **Every code change must update that document in the same change.** See [CONTRIBUTING.md](CONTRIBUTING.md) and [SECURITY.md](SECURITY.md).
 
-Next milestones: isolated tool workers and hard deadlines, token streaming, then planning and multi-agent workflows. Keep these separate from the minimal runtime.
+Next milestones: token streaming, OS permission/resource sandboxing, then planning and multi-agent workflows. Keep these separate from the minimal runtime.
 
 This repository is being prepared for open sourcing. A license and final public/package name must be chosen before publication; no license grant is currently supplied. The local distribution name `agentos-local` is provisional.

@@ -11,6 +11,7 @@ let rawAnswer = '';
 let activeSavedId = null;
 let activeStarterPrompts = [];
 let storageEnabled = false;
+let isolatedRuns = false;
 const libraryOffsets = {agents:0, runs:0};
 let capabilityCatalog = [];
 let catalogReady = false;
@@ -175,7 +176,7 @@ async function readRunStream(response) {
           recordActivity(`${event.name} ${event.ok ? 'finished' : 'returned an error'} · ${event.tool_calls} tool calls`);
         } else if (event.type === 'result') {
           result = event.data;
-          recordActivity(result.finish_reason === 'cancelled' ? 'Run stopped. Collected evidence is available below.' : 'Run finished.');
+          recordActivity(result.finish_reason === 'cancelled' ? 'Run stopped. Collected evidence is available below.' : result.finish_reason === 'timed_out' ? 'Total time limit reached. Worker terminated; collected evidence retained.' : 'Run finished.');
         } else if (event.type === 'error') {
           throw new Error(event.data.error || 'Run failed');
         }
@@ -193,7 +194,7 @@ $('stop-run').addEventListener('click', async () => {
     const response = await fetch('/api/run/stop', {method: 'POST', headers: {'Content-Type':'application/json', 'X-AgentOS-Token':document.querySelector('meta[name="agentos-token"]').content}, body:JSON.stringify({run_id:activeRunId})});
     const result = await response.json();
     if (!response.ok) throw new Error(result.error || 'Could not stop the run');
-    recordActivity(result.stopping ? 'Stop requested. Waiting for the current request or tool to finish; no further steps will start.' : 'Run already finished.');
+    recordActivity(result.stopping ? (isolatedRuns ? 'Stop requested. Terminating the run worker and retaining received evidence…' : 'Stop requested. Waiting for the current request or tool to finish; no further steps will start.') : 'Run already finished.');
   } catch (error) { recordActivity(error.message); $('stop-run').disabled = false; }
 });
 function selectedCapabilities(containerId) {
@@ -351,7 +352,7 @@ function renderResearchEvidence(messages) {
 $('run-form').addEventListener('submit', async event => {
   event.preventDefault();
   if (running || !validateConnection()) return;
-  for (const id of ['agent-name', 'steps', 'calls', 'timeout']) {
+  for (const id of ['agent-name', 'steps', 'calls', 'timeout', 'run-timeout']) {
     if (!$(id).checkValidity()) {
       $(id).closest('details').open = true;
       $(id).reportValidity();
@@ -373,6 +374,7 @@ $('run-form').addEventListener('submit', async event => {
     return;
   }
   const payload = { history:conversation, ...connectionPayload(), name: $('agent-name').value.trim(), prompt: $('prompt').value, instructions: $('instructions').value, capabilities: selectedCapabilities('run-capabilities'), file_directory: $('file-directory').value.trim(), purpose: activePurpose, starter_prompts: activeStarterPrompts, save_history: $('save-history').checked, max_steps: Number($('steps').value), max_tool_calls: Number($('calls').value) };
+  if (isolatedRuns) payload.run_timeout = Number($('run-timeout').value);
   $('run').textContent = 'Running…';
   $('result').hidden = true;
   try {
@@ -389,7 +391,8 @@ $('run-form').addEventListener('submit', async event => {
     showRunResult(result);
     setStatus('status', result.finish_reason === 'completed' || !result.finish_reason ? 'Run complete.' : 'Research budget reached. Showing collected results; the search may be incomplete.');
     if (result.finish_reason === 'cancelled') setStatus('status', 'Run stopped. Inspect collected evidence below.');
-    if (result.history_id) setStatus('status', (result.finish_reason === 'cancelled' ? 'Run stopped and saved to local history.' : 'Run finished and saved to local history.') + (result.finish_reason !== 'completed' ? ' Results may be partial.' : ''));
+    if (result.finish_reason === 'timed_out') setStatus('status', 'Total run time limit reached. The worker was terminated; collected evidence is available below.');
+    if (result.history_id) setStatus('status', (result.finish_reason === 'cancelled' ? 'Run stopped and saved to local history.' : result.finish_reason === 'timed_out' ? 'Run reached its time limit and was saved to local history.' : 'Run finished and saved to local history.') + (result.finish_reason !== 'completed' ? ' Results may be partial.' : ''));
     if (result.history_error) setStatus('status', result.history_error, true);
     if (result.context_error) setStatus('status', `Answer retained. ${result.context_error}`, true);
   } catch (error) { recordActivity('Run ended with an error.'); setStatus('status', error.message || 'Could not reach the local workspace.', true); }
@@ -438,7 +441,7 @@ function currentProfile() {
   return {name:$('agent-name').value.trim(), purpose:activePurpose, instructions:$('instructions').value,
     capabilities:selectedCapabilities('run-capabilities'), starter_prompts:activeStarterPrompts,
     provider, model:$('model').value.trim(), base_url:(provider === 'ollama' || provider === 'custom') ? $('endpoint').value.trim() : '',
-    max_steps:Number($('steps').value), max_tool_calls:Number($('calls').value), timeout:Number($('timeout').value)};
+    max_steps:Number($('steps').value), max_tool_calls:Number($('calls').value), run_timeout:Number($('run-timeout').value), timeout:Number($('timeout').value)};
 }
 async function saveAgent(asNew = false) {
   if (running || !storageEnabled) return;
@@ -466,6 +469,7 @@ function loadProfile(profile, id = null) {
   activePurpose = profile.purpose;
   $('active-purpose').textContent = activePurpose;
   for (const [key, field] of [['max_steps','steps'],['max_tool_calls','calls'],['timeout','timeout']]) $(field).value = profile[key];
+  $('run-timeout').value = profile.run_timeout ?? 300;
   const available = profile.capabilities.filter(id => capabilityCatalog.some(entry => entry.id === id && entry.available));
   renderCapabilities('run-capabilities', available);
   renderStarters(profile.starter_prompts);
@@ -549,6 +553,10 @@ for (const kind of ['agents','runs']) {
 }
 fetch('/api/workspace').then(response => response.json()).then(data => {
   storageEnabled = data.enabled;
+  isolatedRuns = Boolean(data.isolated_runs);
+  $('deadline-setting').hidden = !isolatedRuns;
+  $('execution-mode-note').textContent = isolatedRuns ? 'Agent tasks run in a separate worker. Stop terminates it; the total deadline includes inference and tools. This is process separation, not an OS permission sandbox.' : 'This SDK server uses in-process execution. Stop waits for the current operation. Start with agentos serve for isolated tasks and hard deadlines.';
+  $('stop-help').textContent = isolatedRuns ? 'Stop terminates the run worker. Received evidence stays available; completed side effects cannot be undone.' : 'Stop takes effect after the current model request or tool finishes. Collected evidence stays available.';
   $('save-agent').disabled = !storageEnabled;
   $('save-agent-copy').disabled = !storageEnabled;
   $('save-history').disabled = !storageEnabled;

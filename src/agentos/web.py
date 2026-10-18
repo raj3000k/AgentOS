@@ -14,13 +14,16 @@ import urllib.parse
 from .conversation import MAX_TURNS, validate_history
 from .agent import Agent
 from .context import generate_context
+from .execution import run_isolated
 from .errors import AgentOSError
 from .providers import PROVIDERS, create_client
 from .capabilities import catalog, validate_selection, build_capabilities
 from .storage import WorkspaceStore, profile_data
 
 
-def make_server(port=8765, *, request_token=None, storage_path=None):
+def make_server(port=8765, *, request_token=None, storage_path=None, isolate_runs=False):
+    if type(isolate_runs) is not bool:
+        raise ValueError('Isolation setting must be a boolean')
     store = WorkspaceStore(storage_path) if storage_path is not None else None
     token = request_token if request_token is not None else secrets.token_urlsafe(32)
     if not isinstance(token, str) or len(token) < 32 or not token.isascii() or not all(c.isalnum() or c in "-_" for c in token):
@@ -65,7 +68,7 @@ def make_server(port=8765, *, request_token=None, storage_path=None):
             if not self.allowed():
                 return self.send(403, {"error": "Open the workspace using its printed loopback URL"})
             if self.path == "/api/workspace":
-                return self.send(200, {"enabled": store is not None})
+                return self.send(200, {"enabled": store is not None, "isolated_runs": isolate_runs})
             if self.path.startswith(("/api/agents", "/api/runs")):
                 if store is None:
                     return self.send(503, {"error": "Local storage is disabled"})
@@ -174,6 +177,11 @@ def make_server(port=8765, *, request_token=None, storage_path=None):
                     raise ValueError("Tool calls must be 0–64")
                 if type(timeout) not in (int, float) or not 1 <= timeout <= 300:
                     raise ValueError("Request timeout must be 1–300 seconds")
+                run_timeout = data.get('run_timeout', 300)
+                if type(run_timeout) is not int or not 5 <= run_timeout <= 1800:
+                    raise ValueError('Total run deadline must be 5–1800 seconds')
+                if not isolate_runs and 'run_timeout' in data:
+                    return self.send(400, {'error': 'Hard deadlines require an isolated workspace server'})
                 client = create_client(provider, api_key=key, base_url=host, timeout=timeout)
                 if self.path == "/api/context":
                     draft = generate_context(client, model, data.get("description", ""),
@@ -189,6 +197,9 @@ def make_server(port=8765, *, request_token=None, storage_path=None):
                     raise ValueError("Invalid agent name")
                 if store is not None and save_history:
                     run_profile = profile_data({**data, 'capabilities': selected})
+                worker_config = {'provider': provider, 'model': model, 'api_key': key, 'base_url': host,
+                                 'timeout': timeout, 'capabilities': selected, 'file_directory': directory,
+                                 'name': name, 'instructions': instructions, 'max_steps': steps, 'max_tool_calls': calls}
                 tools, capability_context = build_capabilities(selected, directory=directory)
                 if capability_context:
                     instructions += "\n\nActual enabled capabilities for this run:\n" + capability_context
@@ -204,8 +215,8 @@ def make_server(port=8765, *, request_token=None, storage_path=None):
                 prompt = data.get('prompt', '')
                 if not isinstance(prompt, str) or not prompt.strip() or len(prompt) > 20000:
                     raise ValueError('Invalid prompt')
-                if self.path == '/api/run/stream':
-                    run_id = data.get('run_id')
+                if self.path == '/api/run/stream' or isolate_runs:
+                    run_id = data.get('run_id') if self.path == '/api/run/stream' else str(uuid.uuid4())
                     if not isinstance(run_id, str) or str(uuid.UUID(run_id)) != run_id:
                         raise ValueError('Invalid run ID')
                     with active_lock:
@@ -214,17 +225,23 @@ def make_server(port=8765, *, request_token=None, storage_path=None):
                         self.stop_event = threading.Event()
                         active_runs[run_id] = self.stop_event
                         active_id = run_id
-                    self.send_response(200)
-                    self.send_header('Content-Type', 'application/x-ndjson')
-                    self.send_header('Cache-Control', 'no-store')
-                    self.send_header('X-Content-Type-Options', 'nosniff')
-                    self.send_header('Connection', 'close')
-                    self.end_headers()
-                    self.close_connection = True
-                    self.streaming = True
-                    self.stream_event({'type': 'started', 'run_id': run_id})
+                    if self.path == '/api/run/stream':
+                        self.send_response(200)
+                        self.send_header('Content-Type', 'application/x-ndjson')
+                        self.send_header('Cache-Control', 'no-store')
+                        self.send_header('X-Content-Type-Options', 'nosniff')
+                        self.send_header('Connection', 'close')
+                        self.end_headers()
+                        self.close_connection = True
+                        self.streaming = True
+                        self.stream_event({'type': 'started', 'run_id': run_id})
                 started = time.monotonic()
-                result = agent.run(prompt, history=history, **({'on_event': self.stream_event, 'should_stop': self.stop_event.is_set}
+                if isolate_runs:
+                    result = run_isolated({**worker_config, 'prompt': prompt, 'history': history}, run_timeout=run_timeout,
+                                          on_event=self.stream_event if self.streaming else None,
+                                          should_stop=self.stop_event.is_set)
+                else:
+                    result = agent.run(prompt, history=history, **({'on_event': self.stream_event, 'should_stop': self.stop_event.is_set}
                                              if self.streaming else {}))
                 output = {**asdict(result), "elapsed": round(time.monotonic() - started, 2), "provider": provider, "model": model}
                 if store is not None and save_history:
@@ -255,12 +272,19 @@ def make_server(port=8765, *, request_token=None, storage_path=None):
                     with active_lock:
                         active_runs.pop(active_id, None)
 
-    return ThreadingHTTPServer(("127.0.0.1", port), Handler)
+    class WorkspaceServer(ThreadingHTTPServer):
+        def server_close(self):
+            with active_lock:
+                for stop in active_runs.values():
+                    stop.set()
+            super().server_close()
+
+    return WorkspaceServer(("127.0.0.1", port), Handler)
 
 
 def serve(port=8765):
     try:
-        server = make_server(port, storage_path=Path.cwd() / ".agentos" / "workspace.sqlite3")
+        server = make_server(port, storage_path=Path.cwd() / ".agentos" / "workspace.sqlite3", isolate_runs=True)
     except sqlite3.Error as exc:
         raise ValueError("Cannot open local workspace database. Check .agentos/workspace.sqlite3 permissions or restore a valid backup.") from exc
     with server:
