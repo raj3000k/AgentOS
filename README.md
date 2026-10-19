@@ -52,6 +52,20 @@ Set the named environment variable privately before running. The default key var
 
 Provider references: [Gemini compatibility](https://ai.google.dev/gemini-api/docs/openai), [OpenAI Chat Completions](https://developers.openai.com/api/reference/resources/chat), [Groq compatibility](https://console.groq.com/docs/openai), [DeepSeek API](https://api-docs.deepseek.com/).
 
+## Task planning and completion review
+
+**Plan before running**, under **Tools & execution limits**, is on by default on a fresh workspace page and can be switched off. It produces 1–6 visible steps, each with a completion criterion, then executes the task with the capabilities you selected. Saved profiles remember the setting; older profiles default to planning off. SDK/HTTP callers opt in with `plan_task=True`; CLI behavior is unchanged.
+
+The task-plan card shows pending, in-progress, completed and blocked steps, short progress notes and a final completion review. Planning consumes **one request within the configured model-step limit** (at least two steps required). The trusted `update_task_plan` control tool consumes ordinary tool-call budget. No hidden planning/judging requests, automatic retries or budget extensions are added. Invalid plan output becomes a clearly labeled single task checkpoint without executing any planning-response tool calls.
+
+Actual task-tool results receive current-run references such as `e1`. Updates can cite only references that exist and whose tool execution returned successfully; invented/failed references are rejected. Click a reference in a finished plan to inspect the transcript. Referencing a tool result does **not** prove factual correctness, task relevance or that the criterion is met. Progress and completion are model-reported. Writing/reasoning steps can be completed with a note and no tool reference, clearly labeled as model-only assessments. A successful tool return may itself describe unavailable or unverified domain data.
+
+The final review checks whether every step was marked completed, whether blocked work remains, and whether cited references are valid. An answer never automatically marks pending steps completed. Stop/deadline/budget limits leave unfinished work visible. No independent verifier or correctness guarantee is claimed. Plans do not grant tools, register generated code or expand file/network permissions.
+
+Plans and completion reviews are saved with opted-in run snapshots and restored on **Open result**; worker checkpoints preserve the latest received plan on interruption. Follow-ups create a fresh plan for the new request and retain prior task evidence, excluding progress-control tool messages. Plan titles/notes may echo task data and are treated as sensitive content, displayed as inert text. Planning reserves 100 characters of the usual tool-envelope budget for evidence-reference metadata.
+
+SDK example: `result = agent.run("Compare these options", plan_task=True)`; inspect `result.plan['steps']` and `result.plan['checks']`. Without `plan_task`, the existing direct execution path remains unchanged.
+
 ## Follow-up conversations
 
 After a reply, ask a follow-up in the same composer. Earlier user prompts, answers and completed tool evidence are included in the next request. Expand any turn in the conversation panel to review its formatted answer. **New conversation** clears the active context; changing instructions, capabilities, provider, model or endpoint also starts fresh. Renaming an agent, adjusting limits or configuring credentials/file access does not erase context. Applying/loading another agent starts a new conversation.
@@ -88,7 +102,7 @@ SDK `Agent.run` and CLI custom tools retain their trusted in-process behavior. `
 
 Run workspace shows model-step progress, tool start/completion and tool errors as they happen. Expand **Step by step** to review activity. **Stop run** terminates the production workspace worker. In-process SDK/test servers retain cooperative stopping, which waits for the active operation. Neither mode undoes side effects or avoids charges for a request already sent. Cancelled results expose collected sources and the execution transcript; pending tools in an interrupted batch were not run. Opted-in history saves them as `cancelled`.
 
-The workspace uses token-protected `POST /api/run/stream` (newline-delimited JSON) and `/api/run/stop`; existing `/api/run` JSON clients still work. Up to four streaming runs may be active per server; isolated JSON runs share this same cap. Activity contains only lifecycle metadata, not prompts, tool arguments, outputs or hidden model reasoning. Failed writes request a stop when detected; tab closure may remain undetected until the next stream write, but the total deadline still applies to isolated runs. API credentials remain in request memory only.
+The workspace uses token-protected `POST /api/run/stream` (newline-delimited JSON) and `/api/run/stop`; existing `/api/run` JSON clients still work. Up to four streaming runs may be active per server; isolated JSON runs share this same cap. Lifecycle activity contains operation metadata. When planning is enabled, separate plan events include bounded user-facing titles, criteria and progress notes, which may echo task data. Raw tool transcripts are not automatically forwarded as activity; hidden model reasoning is not requested. Failed writes request a stop when detected; tab closure may remain undetected until the next stream write, but the total deadline still applies to isolated runs. API credentials remain in request memory only.
 
 SDK: `agent.run(prompt, on_event=callback, should_stop=stop_event.is_set)` provides the same lifecycle metadata and cooperative stop checks. Callbacks are trusted synchronous application functions; exceptions propagate. CLI runs retain their existing behavior. Token-by-token answers, true operation resumption and background run reconnection are separate future work.
 
@@ -202,6 +216,6 @@ The default endpoint is `http://localhost:11434`. `--host` explicitly selects an
 
 See [detailed-context.md](detailed-context.md) for architecture, file map, design rationale, status, and chronological changes. **Every code change must update that document in the same change.** See [CONTRIBUTING.md](CONTRIBUTING.md) and [SECURITY.md](SECURITY.md).
 
-Next milestones: token streaming, OS permission/resource sandboxing, then planning and multi-agent workflows. Keep these separate from the minimal runtime.
+Next milestones: token streaming, OS permission/resource sandboxing, and multi-agent workflows. Visible single-agent planning and completion review are implemented. Keep these separate from the minimal runtime.
 
 This repository is being prepared for open sourcing. A license and final public/package name must be chosen before publication; no license grant is currently supplied. The local distribution name `agentos-local` is provisional.

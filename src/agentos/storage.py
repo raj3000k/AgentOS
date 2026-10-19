@@ -30,6 +30,9 @@ def profile_data(data):
         if url.scheme not in ('http', 'https') or not url.hostname or url.username or url.password or url.query or url.fragment:
             raise ValueError('Endpoint must not contain credentials or query parameters')
         url.port
+    if type(data.get('plan_task', False)) is not bool:
+        raise ValueError('Planning setting must be a boolean')
+    result['plan_task'] = data.get('plan_task', False)
     result['capabilities'] = validate_selection(data.get('capabilities', []))
     starters = data.get('starter_prompts', [])
     if not isinstance(starters, list) or len(starters) > 3 or any(not isinstance(value, str) or len(value) > 500 for value in starters):
@@ -93,7 +96,7 @@ class WorkspaceStore:
         data = {'profile': profile_data(profile), 'prompt': prompt}
         if result is not None:
             # Persist only public RunResult fields; never the HTTP request/client configuration.
-            data['result'] = {key: result[key] for key in ('content', 'messages', 'model_calls', 'tool_calls', 'finish_reason', 'limit_reason', 'elapsed', 'provider', 'model', 'conversation', 'context_error') if key in result}
+            data['result'] = {key: result[key] for key in ('content', 'messages', 'model_calls', 'tool_calls', 'finish_reason', 'limit_reason', 'elapsed', 'provider', 'model', 'conversation', 'context_error', 'plan') if key in result}
             status = result.get('finish_reason', 'completed')
         else:
             data['error'] = str(error)[:500]

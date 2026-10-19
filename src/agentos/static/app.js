@@ -67,6 +67,7 @@ function resetConversation(clearPrompt = true) {
   conversationBlocked = false;
   $('result').hidden = true;
   $('activity').hidden = true;
+  renderTaskPlan(null);
   if (clearPrompt) $('prompt').value = '';
   updateConversation();
 }
@@ -140,6 +141,41 @@ async function request(path, payload, statusId, pending) {
     document.querySelectorAll('main').forEach(element => element.setAttribute('aria-busy', 'false'));
   }
 }
+function renderTaskPlan(plan, outcome = null) {
+  $('task-plan').hidden = !plan;
+  $('plan-steps').replaceChildren();
+  if (!plan) return;
+  $('plan-summary').textContent = `${plan.completed} of ${plan.total} steps marked completed`;
+  $('plan-assessment').textContent = plan.assessment;
+  $('plan-warning').textContent = plan.warning || '';
+  $('plan-warning').hidden = !plan.warning;
+  for (const step of plan.steps) {
+    const item = document.createElement('li'); item.className = 'plan-step';
+    item.dataset.status = step.status;
+    const heading = document.createElement('div'); heading.className = 'plan-step-heading';
+    const title = document.createElement('strong'); title.textContent = step.title;
+    const status = document.createElement('span'); status.className = 'plan-step-status'; status.textContent = step.status.replaceAll('_',' ');
+    heading.append(title, status);
+    const criterion = document.createElement('p'); criterion.className = 'hint'; criterion.textContent = `Completion criterion: ${step.criterion}`;
+    item.append(heading, criterion);
+    if (step.note) { const note = document.createElement('p'); note.textContent = step.note; item.append(note); }
+    if (step.evidence.length) {
+      const references = document.createElement(outcome ? 'button' : 'span'); references.className = 'text-button';
+      references.textContent = `Referenced tools: ${step.evidence.join(', ')}${outcome ? ' · inspect ↗' : ''}`;
+      if (outcome) { references.type = 'button'; references.addEventListener('click', () => { $('trace').closest('details').open = true; $('trace').scrollIntoView({behavior:'smooth',block:'center'}); }); }
+      item.append(references);
+    } else if (step.status === 'completed') {
+      const note = document.createElement('p'); note.className = 'hint'; note.textContent = 'Model assessment · no tool evidence cited'; item.append(note);
+    }
+    $('plan-steps').append(item);
+  }
+  $('plan-checks').hidden = !outcome;
+  if (outcome) {
+    const interrupted = ['cancelled','timed_out','partial'].includes(outcome);
+    const referenceCheck = plan.steps.some(step => step.evidence.length) ? 'Cited references exist and returned successfully.' : 'No tool evidence was cited; completion is a model-only assessment.';
+    $('plan-checks').textContent = `${interrupted ? 'Run interrupted or partial. ' : ''}Completion review: ${plan.checks.all_steps_marked_completed ? 'all steps marked completed by the model' : 'some steps remain incomplete'}${plan.checks.has_blocked_steps ? '; blocked work remains' : ''}. ${referenceCheck} This does not independently verify the answer or criterion satisfaction.`;
+  }
+}
 function recordActivity(text) {
   const item = document.createElement('li');
   item.textContent = text;
@@ -168,8 +204,11 @@ async function readRunStream(response) {
           $('stop-run').disabled = false;
           $('stop-run').textContent = 'Stop run';
           recordActivity('Run started.');
+        } else if (event.type === 'plan_ready' || event.type === 'plan_update') {
+          renderTaskPlan(event.plan);
+          recordActivity(`${event.type === 'plan_ready' ? 'Plan ready' : 'Plan updated'} · ${event.plan.completed}/${event.plan.total} steps marked completed`);
         } else if (event.type === 'model_start') {
-          recordActivity(`Model step ${event.step} of ${event.max_steps}${event.finalizing ? ' · preparing final summary' : ' · waiting for model'}`);
+          recordActivity(`${event.phase === 'planning' ? 'Planning task · ' : ''}Model step ${event.step} of ${event.max_steps}${event.finalizing ? ' · preparing final summary' : ' · waiting for model'}`);
         } else if (event.type === 'tool_start') {
           recordActivity(`Using ${event.name}…`);
         } else if (event.type === 'tool_end') {
@@ -373,8 +412,10 @@ $('run-form').addEventListener('submit', async event => {
     setStatus('status', 'Conversation context is full. Choose New conversation before sending another task.', true);
     return;
   }
-  const payload = { history:conversation, ...connectionPayload(), name: $('agent-name').value.trim(), prompt: $('prompt').value, instructions: $('instructions').value, capabilities: selectedCapabilities('run-capabilities'), file_directory: $('file-directory').value.trim(), purpose: activePurpose, starter_prompts: activeStarterPrompts, save_history: $('save-history').checked, max_steps: Number($('steps').value), max_tool_calls: Number($('calls').value) };
+  if ($('plan-task').checked && Number($('steps').value) < 2) { setStatus('status', 'Planning needs at least two model steps. Increase the limit or turn planning off.', true); return; }
+  const payload = { plan_task:$('plan-task').checked, history:conversation, ...connectionPayload(), name: $('agent-name').value.trim(), prompt: $('prompt').value, instructions: $('instructions').value, capabilities: selectedCapabilities('run-capabilities'), file_directory: $('file-directory').value.trim(), purpose: activePurpose, starter_prompts: activeStarterPrompts, save_history: $('save-history').checked, max_steps: Number($('steps').value), max_tool_calls: Number($('calls').value) };
   if (isolatedRuns) payload.run_timeout = Number($('run-timeout').value);
+  renderTaskPlan(null);
   $('run').textContent = 'Running…';
   $('result').hidden = true;
   try {
@@ -395,6 +436,7 @@ $('run-form').addEventListener('submit', async event => {
     if (result.history_id) setStatus('status', (result.finish_reason === 'cancelled' ? 'Run stopped and saved to local history.' : result.finish_reason === 'timed_out' ? 'Run reached its time limit and was saved to local history.' : 'Run finished and saved to local history.') + (result.finish_reason !== 'completed' ? ' Results may be partial.' : ''));
     if (result.history_error) setStatus('status', result.history_error, true);
     if (result.context_error) setStatus('status', `Answer retained. ${result.context_error}`, true);
+    if (result.plan && !result.plan.checks.all_steps_marked_completed) setStatus('status', $('status').textContent + ' Completion checks show unfinished plan steps.');
   } catch (error) { recordActivity('Run ended with an error.'); setStatus('status', error.message || 'Could not reach the local workspace.', true); }
   finally { $('run').textContent = 'Run agent →'; }
 });
@@ -420,6 +462,7 @@ $('raw-view').addEventListener('click', () => setAnswerView(true));
 $('download-answer').addEventListener('click', () => AgentOSOutput.download(rawAnswer, 'agentos-answer.md', 'text/markdown;charset=utf-8'));
 
 function showRunResult(result) {
+    renderTaskPlan(result.plan, result.finish_reason || 'completed');
     rawAnswer = result.content;
     AgentOSOutput.render($('answer'), rawAnswer);
     $('raw-answer').textContent = rawAnswer;
@@ -438,7 +481,7 @@ async function workspaceRequest(path, payload) {
   return result;
 }
 function currentProfile() {
-  return {name:$('agent-name').value.trim(), purpose:activePurpose, instructions:$('instructions').value,
+  return {plan_task:$('plan-task').checked, name:$('agent-name').value.trim(), purpose:activePurpose, instructions:$('instructions').value,
     capabilities:selectedCapabilities('run-capabilities'), starter_prompts:activeStarterPrompts,
     provider, model:$('model').value.trim(), base_url:(provider === 'ollama' || provider === 'custom') ? $('endpoint').value.trim() : '',
     max_steps:Number($('steps').value), max_tool_calls:Number($('calls').value), run_timeout:Number($('run-timeout').value), timeout:Number($('timeout').value)};
@@ -470,6 +513,7 @@ function loadProfile(profile, id = null) {
   $('active-purpose').textContent = activePurpose;
   for (const [key, field] of [['max_steps','steps'],['max_tool_calls','calls'],['timeout','timeout']]) $(field).value = profile[key];
   $('run-timeout').value = profile.run_timeout ?? 300;
+  $('plan-task').checked = profile.plan_task ?? false;
   const available = profile.capabilities.filter(id => capabilityCatalog.some(entry => entry.id === id && entry.available));
   renderCapabilities('run-capabilities', available);
   renderStarters(profile.starter_prompts);

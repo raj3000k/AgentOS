@@ -45,6 +45,6 @@ def history_messages(history):
 
 def append_turn(history, prompt, result):
     evidence = [{'name': message.get('tool_name', 'tool'), 'content': message['content']}
-                for message in result.messages if message.get('role') == 'tool']
+                for message in result.messages if message.get('role') == 'tool' and message.get('tool_name') != 'update_task_plan']
     return validate_history([*history, {'prompt': prompt, 'answer': result.content,
                                       'evidence': evidence, 'status': result.finish_reason}])

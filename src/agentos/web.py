@@ -177,6 +177,9 @@ def make_server(port=8765, *, request_token=None, storage_path=None, isolate_run
                     raise ValueError("Tool calls must be 0–64")
                 if type(timeout) not in (int, float) or not 1 <= timeout <= 300:
                     raise ValueError("Request timeout must be 1–300 seconds")
+                plan_task = data.get('plan_task', False)
+                if type(plan_task) is not bool or (plan_task and steps < 2):
+                    return self.send(400, {'error': 'Planning requires at least two model steps and a boolean setting'})
                 run_timeout = data.get('run_timeout', 300)
                 if type(run_timeout) is not int or not 5 <= run_timeout <= 1800:
                     raise ValueError('Total run deadline must be 5–1800 seconds')
@@ -199,7 +202,7 @@ def make_server(port=8765, *, request_token=None, storage_path=None, isolate_run
                     run_profile = profile_data({**data, 'capabilities': selected})
                 worker_config = {'provider': provider, 'model': model, 'api_key': key, 'base_url': host,
                                  'timeout': timeout, 'capabilities': selected, 'file_directory': directory,
-                                 'name': name, 'instructions': instructions, 'max_steps': steps, 'max_tool_calls': calls}
+                                 'name': name, 'instructions': instructions, 'max_steps': steps, 'max_tool_calls': calls, 'plan_task': plan_task}
                 tools, capability_context = build_capabilities(selected, directory=directory)
                 if capability_context:
                     instructions += "\n\nActual enabled capabilities for this run:\n" + capability_context
@@ -241,7 +244,7 @@ def make_server(port=8765, *, request_token=None, storage_path=None, isolate_run
                                           on_event=self.stream_event if self.streaming else None,
                                           should_stop=self.stop_event.is_set)
                 else:
-                    result = agent.run(prompt, history=history, **({'on_event': self.stream_event, 'should_stop': self.stop_event.is_set}
+                    result = agent.run(prompt, history=history, plan_task=plan_task, **({'on_event': self.stream_event, 'should_stop': self.stop_event.is_set}
                                              if self.streaming else {}))
                 output = {**asdict(result), "elapsed": round(time.monotonic() - started, 2), "provider": provider, "model": model}
                 if store is not None and save_history:

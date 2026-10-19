@@ -17,3 +17,16 @@
 #conversation-turns summary{cursor:pointer;font-size:14px;overflow-wrap:anywhere;line-height:1.5}
 #conversation-turns details>p{white-space:pre-wrap;overflow-wrap:anywhere;line-height:1.6}
 @media(max-width:600px){.conversation-panel .card-heading{align-items:flex-start;gap:12px;flex-direction:column}}
+
+.task-plan{margin:24px 0;padding:24px;border:1px solid var(--border);border-radius:14px;background:#fff}
+#plan-steps{list-style:none;padding:0;margin:16px 0}
+.plan-step{padding:16px 0;border-top:1px solid var(--border);overflow-wrap:anywhere}
+.plan-step-heading{display:flex;align-items:flex-start;justify-content:space-between;gap:16px}
+.plan-step-heading strong{font-size:13px;line-height:1.6}
+.plan-step-status{font-size:10px;white-space:nowrap;background:#f1f4f2;color:#718177;border-radius:5px;padding:5px 8px}
+.plan-step[data-status="in_progress"] .plan-step-status{background:#edf3fc;color:#456990}
+.plan-step[data-status="completed"] .plan-step-status{background:#eaf4ec;color:#386b4c}
+.plan-step[data-status="blocked"] .plan-step-status{background:#fff0e9;color:#a56642}
+.plan-step>p:not(.hint){font-size:12px;line-height:1.7;white-space:pre-wrap}
+.plan-checks{padding:14px;border-radius:8px;background:#f2f6f2;font-size:12px;line-height:1.8}
+@media(max-width:600px){.task-plan{padding:20px}.task-plan .card-heading{flex-direction:column;gap:4px}.plan-step-heading{gap:10px}.plan-step-heading strong{font-size:12px}}

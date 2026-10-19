@@ -123,7 +123,7 @@ def run_isolated(config, *, run_timeout=300, on_event=None, should_stop=None):
                     'performed work that was not reported; its result is not claimed as complete.')
         messages = [*state['messages'], {'role': 'assistant', 'content': content}]
         result = RunResult(content, messages, state['model_calls'], state['tool_calls'],
-                           'cancelled' if reason == 'user_stop' else 'timed_out', reason)
+                           'cancelled' if reason == 'user_stop' else 'timed_out', reason, plan=state.get('plan'))
         try:
             return replace(result, conversation=append_turn(config['history'], config['prompt'], result))
         except ValueError as exc:

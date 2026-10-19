@@ -5,6 +5,7 @@ from dataclasses import dataclass, replace
 import json
 
 from .conversation import MAX_TURNS, validate_history, history_messages, append_turn
+from .planning import PLAN_PROMPT, TaskPlan
 from .errors import ProviderError, RunLimitError
 from .ollama import ChatClient, OllamaClient
 from .tools import Tool, execute_tool
@@ -20,6 +21,7 @@ class RunResult:
     limit_reason: str | None = None
     conversation: list[dict] | None = None
     context_error: str | None = None
+    plan: dict | None = None
 
 
 class Agent:
@@ -52,22 +54,32 @@ class Agent:
         self.max_steps = max_steps
         self.max_tool_calls = max_tool_calls
 
-    def run(self, prompt: str, *, history=None, on_event=None, should_stop=None, on_checkpoint=None) -> RunResult:
+    def run(self, prompt: str, *, history=None, on_event=None, should_stop=None, on_checkpoint=None, plan_task=False) -> RunResult:
         """Run a fresh conversation, or explicitly supply validated prior turns as history.
 
         History is data-only; prior tool calls are never replayed or permissions restored.
-        Events contain lifecycle metadata, never tool arguments or model content.
+        Lifecycle events contain metadata; plan events include bounded user-facing model
+        descriptions/assessments that can echo user data. Checkpoints include sensitive
+        transcripts. Treat callbacks as trusted application code, not a secret boundary.
         Callbacks run synchronously and their exceptions propagate. Stopping does
         not interrupt an in-flight call or undo side effects. Cancelled transcripts
         may include assistant tool calls whose remaining batch was not executed.
         """
         if not isinstance(prompt, str) or not prompt.strip():
             raise ValueError("Prompt cannot be empty")
+        if type(plan_task) is not bool or (plan_task and self.max_steps < 2):
+            raise ValueError('Planning requires a boolean setting and at least two model steps')
+        if plan_task and 'update_task_plan' in self.tools:
+            raise ValueError('update_task_plan is reserved when planning is enabled')
+        plan = None
+        registry = dict(self.tools)
+        finalize_on_limit = self.finalize_on_limit or plan_task
         history = validate_history([] if history is None else history)
         if len(history) >= MAX_TURNS:
             raise ValueError('Conversation has 20 replies. Start a new conversation.')
 
         def finish(result):
+            result = replace(result, plan=plan.snapshot() if plan else None)
             try:
                 return replace(result, conversation=append_turn(history, prompt, result))
             except ValueError as exc:
@@ -75,7 +87,7 @@ class Agent:
 
         def checkpoint(model_calls, tool_calls):
             if on_checkpoint is not None:
-                on_checkpoint({'messages': deepcopy(messages), 'model_calls': model_calls, 'tool_calls': tool_calls})
+                on_checkpoint({'messages': deepcopy(messages), 'model_calls': model_calls, 'tool_calls': tool_calls, 'plan': plan.snapshot() if plan else None})
 
         def emit(kind, **details):
             if on_event is not None:
@@ -88,13 +100,38 @@ class Agent:
 
         messages = ([{"role": "system", "content": self.instructions}]
                     + history_messages(history) + [{"role": "user", "content": prompt}])
-        schemas = [entry.schema() for entry in self.tools.values()]
+        first_step = 1
+        if plan_task:
+            if should_stop is not None and should_stop():
+                return cancelled(0, 0)
+            checkpoint(1, 0)
+            emit('model_start', step=1, max_steps=self.max_steps, finalizing=False, phase='planning')
+            if should_stop is not None and should_stop():
+                return cancelled(0, 0)
+            try:
+                proposal = self.client.chat(model=self.model,
+                    messages=deepcopy(messages) + [{'role':'user','content':PLAN_PROMPT}], tools=[])
+            except ProviderError:
+                if should_stop is not None and should_stop():
+                    return cancelled(1, 0)
+                raise
+            emit('model_end', step=1)
+            if should_stop is not None and should_stop():
+                return cancelled(1, 0)
+            plan = TaskPlan(proposal, prompt)
+            registry.update({entry.name:entry for entry in plan.tools})
+            messages.append({'role':'assistant', 'content':plan.instructions()})
+            messages.append({'role':'user','content':'Proceed with the task using this plan. Report progress honestly and finish with the requested deliverable and limitations.'})
+            checkpoint(1, 0)
+            emit('plan_ready', plan=plan.snapshot())
+            first_step = 2
+        schemas = [entry.schema() for entry in registry.values()]
         tool_count = 0
         limit_reason = None
-        for step in range(1, self.max_steps + 1):
+        for step in range(first_step, self.max_steps + 1):
             if should_stop is not None and should_stop():
                 return cancelled(step - 1, tool_count)
-            finalizing = self.finalize_on_limit and (limit_reason is not None
+            finalizing = finalize_on_limit and (limit_reason is not None
                 or step == self.max_steps or tool_count >= self.max_tool_calls)
             if finalizing:
                 limit_reason = limit_reason or ("model_steps" if step == self.max_steps else "tool_calls")
@@ -145,7 +182,7 @@ class Agent:
             if step == self.max_steps:
                 raise RunLimitError("Model step limit reached before a final answer; final batch was not executed")
             if tool_count + len(calls) > self.max_tool_calls:
-                if self.finalize_on_limit:
+                if finalize_on_limit:
                     limit_reason = "tool_calls"
                     continue
                 raise RunLimitError("Tool call limit exceeded; batch was not executed")
@@ -157,23 +194,30 @@ class Agent:
                 emit("tool_start", name=fn["name"], tool_calls=tool_count)
                 if should_stop is not None and should_stop():
                     return cancelled(step, tool_count)
-                result = execute_tool(self.tools, fn["name"], fn["arguments"])
+                result = execute_tool(registry, fn["name"], fn["arguments"],
+                                      max_result_chars=15900 if plan else 16000)
+                if plan and fn['name'] != 'update_task_plan':
+                    envelope = json.loads(result)
+                    envelope['evidence_ref'] = plan.record_evidence(fn['name'], envelope)
+                    result = json.dumps(envelope)
                 tool_message = {"role": "tool", "tool_name": fn["name"], "content": result}
                 if "id" in call:
                     tool_message["tool_call_id"] = call["id"]
                 messages.append(tool_message)
                 tool_count += 1
                 checkpoint(step, tool_count)
+                if plan and fn['name'] == 'update_task_plan':
+                    emit('plan_update', plan=plan.snapshot())
                 emit("tool_end", name=fn["name"], tool_calls=tool_count,
                      ok=json.loads(result).get("ok", False))
         raise RunLimitError("Model step limit reached")
 
     def _partial_result(self, messages, model_calls, tool_count, limit_reason):
         lines = ["Partial results: the execution budget was reached and the model did not provide a final summary.",
-                 "Only collected tool evidence is shown below; search candidates are not verified open roles."]
+                 "Only collected tool evidence is shown below; it may be incomplete or unverified."]
         collected = 0
         for message in messages:
-            if message["role"] != "tool":
+            if message["role"] != "tool" or message.get("tool_name") == "update_task_plan":
                 continue
             try:
                 envelope = json.loads(message["content"])
@@ -195,7 +239,7 @@ class Agent:
                     continue
                 title = record.get("title") or record.get("company") or message.get("tool_name", "Page")
                 source = record.get("source_url") or record.get("url") or result.get("url")
-                state = record.get("apply_status") or record.get("verification") or record.get("status") or "unverified search candidate"
+                state = record.get("apply_status") or record.get("verification") or record.get("status") or "unverified collected evidence"
                 lines.append(f"\n{str(title)[:200]} — {str(state)[:100]}")
                 if source:
                     lines.append(f"Source: {source}")

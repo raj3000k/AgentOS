@@ -28,7 +28,7 @@ def main():
                           instructions=config['instructions'] + ('\n\nActual enabled capabilities for this run:\n' + context if context else ''),
                           tools=tools, max_steps=config['max_steps'], max_tool_calls=config['max_tool_calls'],
                           finalize_on_limit=bool(tools))
-            result = agent.run(config['prompt'], history=config['history'],
+            result = agent.run(config['prompt'], history=config['history'], plan_task=config.get('plan_task', False),
                                on_event=lambda event: send({'type': 'event', 'data': event}),
                                on_checkpoint=lambda state: send({'type': 'checkpoint', 'data': state}))
             send({'type': 'result', 'data': asdict(result)})
