@@ -154,7 +154,7 @@ class WebResearchTests(unittest.TestCase):
                                  "web_research": True, "calculator": False, "prompt": "Find exact apply link"}) as output:
                     result = json.load(output)
             schemas = {entry["function"]["name"] for entry in requests[0][1]["tools"]}
-            self.assertEqual(schemas, {"search_linkedin_jobs", "inspect_linkedin_job", "search_web", "read_web_page"})
+            self.assertEqual(schemas, {"search_linkedin_jobs", "inspect_linkedin_job", "search_web", "read_web_page", "review_job_results", "verify_job_application"})
             evidence = json.loads(result["messages"][-2]["content"])["result"]
             self.assertEqual(evidence["application_url"], "https://careers.example.com/jobs/12345")
             self.assertEqual(result["tool_calls"], 1)

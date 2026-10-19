@@ -78,6 +78,15 @@ class Agent:
         if len(history) >= MAX_TURNS:
             raise ValueError('Conversation has 20 replies. Start a new conversation.')
 
+        started_callbacks=set()
+        for entry in self.tools.values():
+            callback=entry.on_run_start
+            if callback is not None and id(callback) not in started_callbacks:
+                if not callable(callback):
+                    raise ValueError('Tool lifecycle callback must be trusted callable application code')
+                callback()
+                started_callbacks.add(id(callback))
+
         def finish(result):
             result = replace(result, plan=plan.snapshot() if plan else None)
             try:

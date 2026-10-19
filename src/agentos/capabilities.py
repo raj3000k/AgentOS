@@ -71,7 +71,13 @@ def build_capabilities(selected, *, directory='') -> tuple[list[Tool], str]:
         tools.append(analyze_csv)
     if 'structured_extraction' in selected:
         tools.extend([extract_text_patterns, inspect_json])
-    return tools, capability_instructions(selected)
+    instructions=capability_instructions(selected)
+    if any(entry in selected for entry in ('web_research','job_boards','browser_reading')):
+        from .job_quality import JobReview, REVIEW_INSTRUCTIONS
+        review=JobReview()
+        tools=[review.wrap(entry) for entry in tools] + review.tools
+        instructions += '\n' + REVIEW_INSTRUCTIONS
+    return tools, instructions
 
 
 def add_research_fallbacks(selected, reasons, description, available):

@@ -302,7 +302,8 @@ class WebResearch:
         title = root.class_text("topcard__title")[:180]
         description = root.class_text("show-more-less-html__markup")
         text = clean(root.text())
-        closed = any(phrase in text.lower() for phrase in ("no longer accepting applications", "this job is no longer available", "job is closed"))
+        from .job_quality import closure_reason
+        closed = bool(closure_reason(description)) or any(phrase in text.lower() for phrase in ("no longer accepting applications", "this job is no longer available", "job is closed"))
         targets = []
         for node in root.nodes():
             label = (node.attrs.get("class", "") + " " + node.attrs.get("data-tracking-control-name", "") + " " + clean(node.text())[:80]).lower()
@@ -320,10 +321,12 @@ class WebResearch:
         elif not title:
             page["status"] = "no_job_details"
             apply_status = "login_required" if "/login" in page["url"] or "/authwall" in page["url"] else "not_exposed"
+        from .job_quality import experience
         return bounded_result({**page, "job_id": job_id, "source_url": source, "title": title,
                 "company": root.class_text("topcard__org-name-link")[:120],
                 "location": root.class_text("topcard__flavor--bullet")[:180],
                 "description": description[:6000], "description_truncated": len(description) > 6000,
+                "experience_requirements": experience(description),
                 "application_url": None if closed else targets[0] if targets else source if easy else None,
                 "apply_status": apply_status, "verification": "closed" if closed else "posting_read_not_confirmed_open",
                 "note": "External URLs are extracted, not verified active. Use read_web_page to check the destination. Hidden URLs require matching employer-page research."})

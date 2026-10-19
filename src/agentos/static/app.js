@@ -346,6 +346,66 @@ function safeLink(url) {
     return parsed.protocol === 'https:' && !parsed.username && !parsed.password ? parsed.href : null;
   } catch { return null; }
 }
+function renderJobReview(messages) {
+  $('job-review').hidden = true;
+  $('job-review-items').replaceChildren();
+  $('job-review-filters').replaceChildren();
+  let review = null;
+  for (const message of messages) {
+    if (message.role !== 'tool' || message.tool_name !== 'review_job_results') continue;
+    try { const envelope = JSON.parse(message.content); if (envelope.ok && envelope.result.status === 'reviewed') review = envelope.result; } catch {}
+  }
+  if (!review) {
+    const jobEvidence = messages.some(message => message.role === 'tool' && ['search_linkedin_jobs','inspect_linkedin_job','inspect_browser_job','search_company_jobs','inspect_company_job'].includes(message.tool_name));
+    if (jobEvidence || selectedCapabilities('run-capabilities').includes('job_boards')) {
+      $('job-review').hidden = false;
+      $('job-review-summary').textContent = 'No role/location/experience match review was produced for this run.';
+      $('job-review-note').textContent = 'Collected sources alone do not establish a matching, currently open role. Ask the agent to inspect the postings and review them against your criteria.';
+    }
+    return;
+  }
+  $('job-review').hidden = false;
+  const labels = {confirmed_match:'Matched · published feed', uncertain:'Needs review', excluded:'Excluded', closed:'Closed', blocked:'Blocked'};
+  const criteria = review.criteria;
+  $('job-review-summary').textContent = `${criteria.role} · ${criteria.location} · required minimum experience ≤ ${criteria.max_required_experience} years. ${review.unique_jobs} unique openings from ${review.observations} observations. Showing ${review.jobs.length} of ${review.filtered_total} in this review page.`;
+  $('job-review-note').textContent = review.note + (review.capture_truncated || review.results_truncated ? ' Evidence/result limits were reached; this review is incomplete.' : '') + (review.next_offset !== null ? ` More results start at offset ${review.next_offset}. Ask for a refreshed review of the next page or a specific category; follow-ups must fetch evidence again.` : '');
+  const cards = [];
+  for (const job of review.jobs) {
+    const card = document.createElement('article'); card.className = 'job-review-card';
+    const header = document.createElement('div'); header.className = 'card-heading';
+    const title = document.createElement('strong'); title.textContent = job.title;
+    const category = document.createElement('span'); category.className = 'job-quality-label'; category.textContent = labels[job.quality_category] || 'Needs review';
+    header.append(title, category); card.append(header);
+    const detail = document.createElement('p'); detail.textContent = `${job.company} · ${job.location || 'Location unstated'}`; card.append(detail);
+    const checks = document.createElement('p'); checks.className = 'hint';
+    checks.textContent = `Role: ${job.criteria.role} · location: ${job.criteria.location} · experience: ${job.criteria.experience}${job.criteria.minimum_years !== null ? ` (minimum ${job.criteria.minimum_years} years)` : ''}. Checked: ${job.checked_at || 'timestamp unavailable'}`;
+    card.append(checks);
+    for (const quote of job.criteria.experience_evidence) { const evidence = document.createElement('blockquote'); evidence.textContent = quote; card.append(evidence); }
+    const reasons = document.createElement('p'); reasons.className = 'hint'; reasons.textContent = job.reasons.join(' · '); card.append(reasons);
+    const sources = [...new Set([job.source_url, ...job.sources])];
+    for (const [index, source] of sources.entries()) {
+      const url = safeLink(source); if (!url) continue;
+      const anchor = document.createElement('a'); anchor.href = url; anchor.target = '_blank'; anchor.rel = 'noopener noreferrer'; anchor.textContent = index ? 'Additional source ↗' : 'Source posting ↗'; card.append(anchor);
+    }
+    if (!['closed','blocked','excluded'].includes(job.quality_category) && job.application_url) {
+      const url = safeLink(job.application_url);
+      if (url) { const anchor = document.createElement('a'); anchor.href = url; anchor.target = '_blank'; anchor.rel = 'noopener noreferrer'; anchor.textContent = job.destination_check && job.destination_check.status !== 'published_in_employer_feed' ? 'Destination · latest check unconfirmed ↗' : job.link_status === 'exact_feed_destination' ? 'Exact employer destination ↗' : job.link_status === 'linkedin_easy_apply' ? 'LinkedIn Easy Apply · sign-in may be required ↗' : 'Extracted destination · unverified ↗'; card.append(anchor); }
+    }
+    if (job.destination_check) { const check = document.createElement('p'); check.className = 'hint'; check.textContent = `Destination check: ${job.destination_check.status.replaceAll('_',' ')} · ${job.destination_check.checked_at || 'no timestamp'}. ${job.destination_check.note || ''}`; card.append(check); }
+    cards.push({card, category:job.quality_category}); $('job-review-items').append(card);
+  }
+  const filters = [['all','All shown'], ...Object.entries(labels)];
+  for (const [key,label] of filters) {
+    const button = document.createElement('button'); button.type = 'button'; button.className = 'text-button';
+    button.textContent = key === 'all' ? `${label} (${review.jobs.length})` : `${label} (${cards.filter(card => card.category === key).length} shown / ${review.counts[key]} total)`;
+    button.setAttribute('aria-pressed',String(key === 'all'));
+    button.addEventListener('click', () => {
+      cards.forEach(entry => entry.card.hidden = key !== 'all' && entry.category !== key);
+      for (const sibling of $('job-review-filters').children) sibling.setAttribute('aria-pressed',String(sibling === button));
+    });
+    $('job-review-filters').append(button);
+  }
+}
 function renderResearchEvidence(messages) {
   $('research-items').replaceChildren();
   let count = 0;
@@ -470,6 +530,7 @@ function showRunResult(result) {
     $('metrics').textContent = `${result.provider} / ${result.model} · ${result.model_calls} model requests · ${result.tool_calls} tool calls · ${result.elapsed}s`;
     $('trace').textContent = JSON.stringify(result.messages, null, 2);
     renderResearchEvidence(result.messages);
+    renderJobReview(result.messages);
     $('result').hidden = false;
 }
 async function workspaceRequest(path, payload) {

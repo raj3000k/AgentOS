@@ -31,6 +31,7 @@ class Tool:
     description: str
     signature: inspect.Signature
     annotations: dict[str, type]
+    on_run_start: Callable | None = None
 
     def schema(self) -> dict:
         properties = {}
