@@ -356,7 +356,7 @@ function renderJobReview(messages) {
     try { const envelope = JSON.parse(message.content); if (envelope.ok && envelope.result.status === 'reviewed') review = envelope.result; } catch {}
   }
   if (!review) {
-    const jobEvidence = messages.some(message => message.role === 'tool' && ['search_linkedin_jobs','inspect_linkedin_job','inspect_browser_job','search_company_jobs','inspect_company_job'].includes(message.tool_name));
+    const jobEvidence = messages.some(message => message.role === 'tool' && ['search_linkedin_session','inspect_linkedin_session_job','search_linkedin_jobs','inspect_linkedin_job','inspect_browser_job','search_company_jobs','inspect_company_job'].includes(message.tool_name));
     if (jobEvidence || selectedCapabilities('run-capabilities').includes('job_boards')) {
       $('job-review').hidden = false;
       $('job-review-summary').textContent = 'No role/location/experience match review was produced for this run.';
@@ -411,7 +411,7 @@ function renderResearchEvidence(messages) {
   let count = 0;
   const seen = new Set();
   for (const message of messages) {
-    if (message.role !== 'tool' || !['inspect_linkedin_job', 'read_web_page', 'read_browser_page', 'inspect_browser_job', 'search_company_jobs', 'inspect_company_job'].includes(message.tool_name)) continue;
+    if (message.role !== 'tool' || !['inspect_linkedin_session_job', 'inspect_linkedin_job', 'read_web_page', 'read_browser_page', 'inspect_browser_job', 'search_company_jobs', 'inspect_company_job'].includes(message.tool_name)) continue;
     let record;
     try { const envelope = JSON.parse(message.content); if (!envelope.ok) continue; record = envelope.result; } catch { continue; }
     const records = Array.isArray(record.jobs) ? record.jobs.map(job => ({...job, checked_at:record.checked_at})) : [record];
@@ -671,3 +671,30 @@ updateConversation();
 
 for (const id of ['instructions','model','endpoint']) $(id).addEventListener('input', resetChangedConversation);
 $('run-capabilities').addEventListener('change', resetChangedConversation);
+
+async function refreshLinkedIn() {
+  try {
+    const state = await workspaceRequest('/api/linkedin/status');
+    $('linkedin-status').textContent = state.connected ? 'Connected · keep tab open' : state.paired ? 'Waiting for extension / tab' : 'Not connected';
+    if (state.connected) { $('linkedin-code').value = ''; $('linkedin-code-row').hidden = true; }
+  } catch { $('linkedin-status').textContent = 'Connection unavailable'; }
+}
+$('linkedin-pair').addEventListener('click', async () => {
+  try {
+    const result = await workspaceRequest('/api/linkedin/pair', {});
+    $('linkedin-code').value = result.code;
+    $('linkedin-code-row').hidden = false;
+    $('linkedin-setup').open = true;
+    await refreshLinkedIn();
+  } catch { $('linkedin-status').textContent = 'Could not create pairing code'; }
+});
+$('linkedin-copy').addEventListener('click', async () => {
+  try { await navigator.clipboard.writeText($('linkedin-code').value); $('linkedin-status').textContent = 'Code copied. Paste into the AgentOS extension.'; }
+  catch { $('linkedin-code').type = 'text'; $('linkedin-code').select(); $('linkedin-status').textContent = 'Select and copy this code manually.'; }
+});
+$('linkedin-disconnect').addEventListener('click', async () => {
+  try { await workspaceRequest('/api/linkedin/disconnect', {}); $('linkedin-code').value = ''; $('linkedin-code-row').hidden = true; await refreshLinkedIn(); }
+  catch { $('linkedin-status').textContent = 'Could not disconnect. Stop AgentOS to revoke access.'; }
+});
+refreshLinkedIn();
+setInterval(refreshLinkedIn, 5000);

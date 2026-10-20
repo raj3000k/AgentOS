@@ -23,7 +23,9 @@ def main():
         with redirect_stdout(sys.stderr):
             client = create_client(
                 config['provider'], api_key=config['api_key'], base_url=config['base_url'], timeout=config['timeout'])
-            tools, context = build_capabilities(config['capabilities'], directory=config['file_directory'])
+            tools, context = build_capabilities(config['capabilities'], directory=config['file_directory'],
+                                                linkedin_endpoint=config.get('linkedin_endpoint', ''),
+                                                linkedin_secret=config.get('linkedin_secret', ''))
             agent = Agent(name=config['name'], model=config['model'], client=client,
                           instructions=config['instructions'] + ('\n\nActual enabled capabilities for this run:\n' + context if context else ''),
                           tools=tools, max_steps=config['max_steps'], max_tool_calls=config['max_tool_calls'],

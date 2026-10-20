@@ -41,3 +41,5 @@
 .job-review-card a{display:inline-block;margin:8px 16px 8px 0;font-size:12px;color:#25694a;text-decoration:underline;text-underline-offset:3px}
 .job-review-card blockquote{font-size:12px;line-height:1.7;margin:12px 0;padding:12px;border-left:3px solid #9bb29f;background:#f4f7f3;white-space:pre-wrap}
 @media(max-width:600px){.job-review-card{padding:16px}.job-review-card .card-heading{flex-direction:column;gap:8px}}
+
+.linkedin-connection{margin:20px 0;padding:18px;border:1px solid var(--line,#d8ddd4);border-radius:16px}.linkedin-connection h3{margin:0}.linkedin-connection ol{padding-left:22px}.linkedin-connection li{margin:10px 0}.linkedin-connection #linkedin-status{font-size:12px;min-width:110px}.linkedin-connection input{max-width:100%}

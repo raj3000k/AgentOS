@@ -23,7 +23,7 @@ class CapabilityTests(unittest.TestCase):
     def test_fixed_catalog_and_unknown_ids(self):
         with patch('agentos.browser_reader.browser_available', return_value=False):
             entries = catalog()
-        self.assertEqual(len(entries), 9)
+        self.assertEqual(len(entries), 10)
         self.assertFalse(next(entry for entry in entries if entry['id'] == 'browser_reading')['available'])
         for values in (["shell"], ["../../tools"], "web_research", [42]):
             with self.subTest(values=values), self.assertRaises(ValueError):

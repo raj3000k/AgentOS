@@ -166,7 +166,7 @@ def apply_target(href, base):
     url = urllib.parse.urljoin(base, unescape(href))
     parsed = urllib.parse.urlsplit(url)
     if parsed.hostname and (parsed.hostname == "linkedin.com" or parsed.hostname.endswith(".linkedin.com")):
-        if parsed.path.rstrip("/").endswith(("/externalApply", "/redirect")):
+        if parsed.path.rstrip("/").endswith(("/externalApply", "/redirect", "/safety/go")):
             values = urllib.parse.parse_qs(parsed.query)
             url = (values.get("url") or values.get("redirect") or [""])[0]
         else:

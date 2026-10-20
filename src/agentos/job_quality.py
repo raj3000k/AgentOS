@@ -10,7 +10,7 @@ from .tools import tool
 from .web_research import WebResearch, public_url, FetchError, bounded_result
 
 CATEGORIES = ('confirmed_match', 'uncertain', 'excluded', 'closed', 'blocked')
-CAPTURE = {'search_linkedin_jobs','inspect_linkedin_job','inspect_browser_job','search_company_jobs','inspect_company_job'}
+CAPTURE = {'search_linkedin_session','inspect_linkedin_session_job','search_linkedin_jobs','inspect_linkedin_job','inspect_browser_job','search_company_jobs','inspect_company_job'}
 REVIEW_INSTRUCTIONS = '''For job tasks, use review_job_results before the final answer. It reviews only actual current-run tool observations, not jobs supplied by a model. Set role/location/max_experience to the user's criteria and report them explicitly. Defaults are SDE 1, Bengaluru, at most 2 years minimum required experience; these are not legal eligibility checks. Review uncertain, excluded, closed and blocked results separately. Use verify_job_application for an observed source when its destination needs checking, then review again. Do not call an extracted URL verified/open merely because it exists. Confirmed matches mean matching explicit evidence plus an exact published employer-feed destination at check time, not a guarantee of accepting applications or independent employer identity. Never pad a requested count with unrelated/uncertain roles. Use the review's reasons, source timestamps and exact URLs in the final answer. Pagination/category filters let you inspect omitted results without repeating searches.'''
 
 
@@ -58,7 +58,7 @@ def specific_link(url):
     p=urllib.parse.urlsplit(key)
     parts=[part for part in p.path.split('/') if part]
     return (len(parts)>=2 and parts[-1].lower() not in ('jobs','careers','search','apply','openings')
-            or any(k.lower() in ('jobid','job_id','gh_jid','requisitionid','reqid') and v for k,v in urllib.parse.parse_qsl(p.query)))
+            or any(k.lower() in ('jobid','job_id','gh_jid','ashby_jid','requisitionid','reqid') and v for k,v in urllib.parse.parse_qsl(p.query)))
 
 
 def closure_reason(description):
@@ -78,6 +78,7 @@ def closure_reason(description):
 def experience(description):
     text=str(description).replace('–','-').replace('—','-')
     findings=[]
+    spans=[]
     pattern=r'\b(\d{1,2})\s*(?:(?:-|to)\s*(\d{1,2}))?\s*(\+|plus)?\s*(?:years?|yrs?)\b'
     for match in re.finditer(pattern,text,re.I):
         context=text[max(0,match.start()-65):min(len(text),match.end()+80)]
@@ -96,9 +97,11 @@ def experience(description):
         if low>50 or high is not None and (high<low or high>50):
             continue
         findings.append({'minimum_years':low,'range_max':high,'quote':relevant.strip()[:180]})
+        spans.append((match.start(),match.end()))
     if not findings:
         return {'status':'unknown','minimum_years':None,'evidence':[]}
-    if len(findings)>1 and re.search(r'\bor\b',text,re.I):
+    distinct_ranges={(row['minimum_years'],row['range_max']) for row in findings}
+    if len(distinct_ranges)>1 and re.search(r'\bor\b',text[spans[0][1]:spans[-1][0]],re.I):
         return {'status':'ambiguous','minimum_years':None,'evidence':[row['quote'] for row in findings[:3]]}
     return {'status':'stated','minimum_years':max(row['minimum_years'] for row in findings),
             'evidence':[row['quote'] for row in findings[:3]]}
@@ -192,8 +195,10 @@ class JobReview:
         if not source or not records:
             return {'status':'error','error':'Inspect this source first; no observed application destination is available.'}
         record=records[-1]; target=record['application_url']
-        if record.get('apply_status')=='closed' or not specific_link(target):
-            return {'status':'not_verified','error':'The posting is closed or its destination is generic, hidden or Easy Apply.'}
+        if record.get('apply_status')=='closed':
+            return {'status':'closed','error':'Collected posting evidence explicitly marks this opening closed.'}
+        if not specific_link(target):
+            return {'status':'not_verified','error':'No specific external application destination is available; this may be LinkedIn Easy Apply or a generic link. This is not evidence that the opening is closed.'}
         if ats_key(target):
             from .job_boards import JobBoards
             boards=JobBoards();boards.reader=self.reader

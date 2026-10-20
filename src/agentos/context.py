@@ -48,7 +48,7 @@ Writing/code_review are model skills, not action tools. Instructions must match 
         capabilities = "\nEnabled capabilities for the agent you are designing:\n" + capability_instructions(selected)
         if 'calculator' not in selected:
             capabilities += "\nCalculator is disabled."
-        if not any(value in selected for value in ('web_research', 'job_boards', 'browser_reading')):
+        if not any(value in selected for value in ('web_research', 'job_boards', 'browser_reading', 'linkedin_session')):
             capabilities += "\nWeb research is disabled. Work only from user-supplied information."
     message = client.chat(model=model, messages=[
         {"role": "system", "content": CONTEXT_INSTRUCTIONS + extra_format + capabilities},

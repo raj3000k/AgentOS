@@ -21,7 +21,7 @@ agentos = "agentos.cli:main"
 where = ["src"]
 
 [tool.setuptools.package-data]
-agentos = ["static/*.html", "static/*.css", "static/*.js"]
+agentos = ["static/*.html", "static/*.css", "static/*.js", "static/linkedin-extension/*"]
 
 [project.optional-dependencies]
 browser = ["playwright>=1.48,<2"]

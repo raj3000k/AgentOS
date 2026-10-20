@@ -30,6 +30,23 @@ def feed_record(job_id='one', **values):
 
 
 class JobQualityTests(unittest.TestCase):
+    def test_repeated_requirements_and_unrelated_or_do_not_erase_experience(self):
+        self.assertEqual(experience('We need 1-2 years of experience in Java or Python. Requirements: 1-2 years of professional backend development experience.')['minimum_years'],1)
+        self.assertEqual(experience('2+ years of software engineering experience, including at least 1 year in a startup or growth-stage environment.')['minimum_years'],2)
+        self.assertEqual(experience('Bachelor degree with 3 years experience OR Master degree with 2 years experience.')['status'],'ambiguous')
+        self.assertTrue(specific_link('https://company.example/careers?ashby_jid=ec05c135-ab26-437a-8fe9-f7a5c4da08e5'))
+        self.assertFalse(specific_link('https://company.example/careers'))
+
+    def test_easy_apply_is_not_reported_as_closure(self):
+        review=JobReview()
+        source='https://www.linkedin.com/jobs/view/123/'
+        review.capture(record(source_url=source,application_url=source,apply_status='linkedin_easy_apply'),'inspect_linkedin_session_job')
+        result=review.verify_job_application(source)
+        self.assertEqual(result['status'],'not_verified')
+        self.assertIn('not evidence that the opening is closed',result['error'])
+        review.capture(record(source_url=source,application_url=source,apply_status='closed'),'inspect_linkedin_session_job')
+        self.assertEqual(review.verify_job_application(source)['status'],'closed')
+
     def test_role_aliases_and_wrong_levels(self):
         for title in ('SDE 1','SDE1','Software Engineer I','Software Development Engineer 1','Junior Software Developer','Associate Software Engineer','Backend Engineer I','Software Engineer Level 1'):
             with self.subTest(title=title):

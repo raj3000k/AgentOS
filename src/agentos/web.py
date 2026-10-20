@@ -3,7 +3,10 @@ from dataclasses import asdict
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from importlib.resources import files
 import json
+import io
+import zipfile
 import secrets
+import re
 import sqlite3
 from pathlib import Path
 import time
@@ -19,6 +22,7 @@ from .errors import AgentOSError
 from .providers import PROVIDERS, create_client
 from .capabilities import catalog, validate_selection, build_capabilities
 from .storage import WorkspaceStore, profile_data
+from .linkedin_session import LinkedInBridge
 
 
 def make_server(port=8765, *, request_token=None, storage_path=None, isolate_runs=False):
@@ -29,6 +33,7 @@ def make_server(port=8765, *, request_token=None, storage_path=None, isolate_run
     if not isinstance(token, str) or len(token) < 32 or not token.isascii() or not all(c.isalnum() or c in "-_" for c in token):
         raise ValueError("Invalid workspace request token")
 
+    linkedin = LinkedInBridge()
     active_runs = {}
     active_lock = threading.Lock()
 
@@ -67,6 +72,14 @@ def make_server(port=8765, *, request_token=None, storage_path=None, isolate_run
         def do_GET(self):
             if not self.allowed():
                 return self.send(403, {"error": "Open the workspace using its printed loopback URL"})
+            if self.path == '/api/linkedin/status':
+                if self.headers.get('X-AgentOS-Token') != token:
+                    return self.send(403, {'error': 'Reload the workspace'})
+                return self.send(200, linkedin.status())
+            if self.path == '/api/linkedin/poll':
+                if not linkedin.authorized(self.headers.get('X-AgentOS-Bridge')):
+                    return self.send(403, {'error': 'Reconnect LinkedIn'})
+                return self.send(200, {'command': linkedin.poll()})
             if self.path == "/api/workspace":
                 return self.send(200, {"enabled": store is not None, "isolated_runs": isolate_runs})
             if self.path.startswith(("/api/agents", "/api/runs")):
@@ -90,6 +103,12 @@ def make_server(port=8765, *, request_token=None, storage_path=None, isolate_run
                 return self.send(200, {"capabilities": catalog()})
             if self.path == "/api/providers":
                 return self.send(200, {"providers": PROVIDERS})
+            if self.path in ('/linkedin-extension.zip', '/browser-extension.zip'):
+                archive = io.BytesIO()
+                with zipfile.ZipFile(archive, 'w', zipfile.ZIP_DEFLATED) as bundle:
+                    for name in ('manifest.json', 'background.js', 'popup.html', 'popup.js', 'companion.js', 'sidepanel.html', 'sidepanel.css', 'sidepanel.js', 'output.js'):
+                        bundle.writestr('agentos-browser-companion/' + name, files('agentos').joinpath('static', 'linkedin-extension', name).read_bytes())
+                return self.send(200, archive.getvalue(), 'application/zip')
             assets = {"/": ("index.html", "text/html; charset=utf-8"),
                       "/app.js": ("app.js", "text/javascript; charset=utf-8"),
                       "/output.js": ("output.js", "text/javascript; charset=utf-8"),
@@ -103,11 +122,32 @@ def make_server(port=8765, *, request_token=None, storage_path=None, isolate_run
             self.send(200, body, mime)
 
         def do_POST(self):
+            if self.path in ('/api/linkedin/read', '/api/linkedin/reply', '/api/linkedin/disconnect') and self.headers.get('X-AgentOS-Bridge'):
+                if not self.allowed() or not linkedin.authorized(self.headers.get('X-AgentOS-Bridge')):
+                    return self.send(403, {'error': 'Reconnect LinkedIn'})
+                try:
+                    size = int(self.headers.get('Content-Length', '0'))
+                    if not 0 < size <= 180000 or self.headers.get_content_type() != 'application/json':
+                        raise ValueError('Invalid bridge payload')
+                    data = json.loads(self.rfile.read(size))
+                    if not isinstance(data, dict):
+                        raise ValueError('Expected object')
+                    if self.path == '/api/linkedin/disconnect':
+                        linkedin.disconnect()
+                        return self.send(200, {'connected': False})
+                    if self.path == '/api/linkedin/reply':
+                        linkedin.reply(data)
+                        return self.send(200, {'accepted': True})
+                    return self.send(200, linkedin.read(data.get('url', '')))
+                except (ValueError, TypeError, OSError):
+                    return self.send(400, {'error': 'Invalid or expired LinkedIn command'})
             origin = self.headers.get("Origin")
+            extension_run = (self.path in ('/api/run/stream', '/api/run/stop') and isinstance(origin, str)
+                             and re.fullmatch(r'chrome-extension://[a-p]{32}', origin) is not None)
             if (not self.allowed() or self.headers.get("X-AgentOS-Token") != token
-                    or (origin is not None and origin != f"http://127.0.0.1:{self.server.server_port}")):
+                    or (origin is not None and origin != f"http://127.0.0.1:{self.server.server_port}" and not extension_run)):
                 return self.send(403, {"error": "Request rejected; reload the local workspace"})
-            if self.path not in ("/api/run", "/api/run/stream", "/api/run/stop", "/api/context", "/api/agents/save", "/api/agents/delete", "/api/runs/delete"):
+            if self.path not in ("/api/run", "/api/run/stream", "/api/run/stop", "/api/context", "/api/agents/save", "/api/agents/delete", "/api/runs/delete", "/api/linkedin/pair", "/api/linkedin/disconnect"):
                 return self.send(404, {"error": "Not found"})
             self.streaming = False
             active_id = None
@@ -123,6 +163,11 @@ def make_server(port=8765, *, request_token=None, storage_path=None, isolate_run
                 data = json.loads(self.rfile.read(size))
                 if not isinstance(data, dict):
                     raise ValueError("Expected an object")
+                if self.path == '/api/linkedin/pair':
+                    return self.send(200, {'code': linkedin.pair()})
+                if self.path == '/api/linkedin/disconnect':
+                    linkedin.disconnect()
+                    return self.send(200, {'connected': False})
                 if self.path == '/api/run/stop':
                     run_id = data.get('run_id')
                     if not isinstance(run_id, str):
@@ -202,8 +247,10 @@ def make_server(port=8765, *, request_token=None, storage_path=None, isolate_run
                     run_profile = profile_data({**data, 'capabilities': selected})
                 worker_config = {'provider': provider, 'model': model, 'api_key': key, 'base_url': host,
                                  'timeout': timeout, 'capabilities': selected, 'file_directory': directory,
+                                 'linkedin_endpoint': f'http://127.0.0.1:{self.server.server_port}/api/linkedin/read',
+                                 'linkedin_secret': linkedin.secret if 'linkedin_session' in selected else '',
                                  'name': name, 'instructions': instructions, 'max_steps': steps, 'max_tool_calls': calls, 'plan_task': plan_task}
-                tools, capability_context = build_capabilities(selected, directory=directory)
+                tools, capability_context = build_capabilities(selected, directory=directory, linkedin_bridge=linkedin)
                 if capability_context:
                     instructions += "\n\nActual enabled capabilities for this run:\n" + capability_context
                 agent = Agent(name=name, model=model, instructions=instructions, client=client,

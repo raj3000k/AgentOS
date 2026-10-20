@@ -1,0 +1,26 @@
+{
+  "manifest_version": 3,
+  "name": "AgentOS \u00b7 Browser Companion",
+  "version": "0.2.0",
+  "description": "Chat with your local AgentOS agent beside pages you explicitly choose.",
+  "permissions": [
+    "activeTab",
+    "scripting",
+    "storage",
+    "alarms",
+    "sidePanel"
+  ],
+  "host_permissions": [
+    "http://127.0.0.1:8765/*"
+  ],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "action": {
+    "default_title": "Open AgentOS companion"
+  },
+  "minimum_chrome_version": "116",
+  "side_panel": {
+    "default_path": "sidepanel.html"
+  }
+}
