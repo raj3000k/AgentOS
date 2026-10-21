@@ -11,7 +11,7 @@ from agentos.web import make_server
 
 
 class BrowserCompanionTests(unittest.TestCase):
-    def test_extension_origin_is_token_protected_and_run_only(self):
+    def test_extension_origin_allows_only_token_protected_runs_and_pairing(self):
         server = make_server(0, request_token='w'*32)
         thread = threading.Thread(target=server.serve_forever, daemon=True)
         thread.start()
@@ -30,8 +30,12 @@ class BrowserCompanionTests(unittest.TestCase):
                 with request('/api/run/stream', extension) as response:
                     events = [json.loads(line) for line in response.read().decode().splitlines()]
                 self.assertEqual(events[-1]['data']['content'], 'A source-grounded summary.')
+            with request('/api/linkedin/pair', extension) as response:
+                self.assertGreaterEqual(len(json.load(response)['code']), 40)
             for path, origin, key in (('/api/agents/save',extension,'w'*32),
-                                      ('/api/linkedin/pair',extension,'w'*32),
+                                      ('/api/linkedin/pair',extension,'wrong'),
+                                      ('/api/linkedin/pair','https://evil.test','w'*32),
+                                      ('/api/linkedin/disconnect',extension,'w'*32),
                                       ('/api/run/stream','https://evil.test','w'*32),
                                       ('/api/run/stream','chrome-extension://invalid','w'*32),
                                       ('/api/run/stream',extension,'wrong')):

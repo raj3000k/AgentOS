@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "AgentOS \u00b7 Browser Companion",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Chat with your local AgentOS agent beside pages you explicitly choose.",
   "permissions": [
     "activeTab",

@@ -91,6 +91,7 @@ function chooseProvider(next) {
   const local = provider === 'ollama';
   $('key-fields').hidden = local;
   $('api-key').required = !local;
+  $('gemini-key-help').hidden = provider !== 'gemini';
   $('endpoint-fields').hidden = !(local || provider === 'custom');
   $('endpoint').required = local || provider === 'custom';
   $('api-providers').hidden = local;
@@ -493,7 +494,8 @@ $('run-form').addEventListener('submit', async event => {
     setStatus('status', result.finish_reason === 'completed' || !result.finish_reason ? 'Run complete.' : 'Research budget reached. Showing collected results; the search may be incomplete.');
     if (result.finish_reason === 'cancelled') setStatus('status', 'Run stopped. Inspect collected evidence below.');
     if (result.finish_reason === 'timed_out') setStatus('status', 'Total run time limit reached. The worker was terminated; collected evidence is available below.');
-    if (result.history_id) setStatus('status', (result.finish_reason === 'cancelled' ? 'Run stopped and saved to local history.' : result.finish_reason === 'timed_out' ? 'Run reached its time limit and was saved to local history.' : 'Run finished and saved to local history.') + (result.finish_reason !== 'completed' ? ' Results may be partial.' : ''));
+    if (result.limit_reason === 'provider_error') setStatus('status', 'Provider request failed. Collected evidence is retained below; the task is incomplete.');
+    if (result.history_id) setStatus('status', (result.limit_reason === 'provider_error' ? 'Provider request failed; collected evidence saved to local history.' : result.finish_reason === 'cancelled' ? 'Run stopped and saved to local history.' : result.finish_reason === 'timed_out' ? 'Run reached its time limit and was saved to local history.' : 'Run finished and saved to local history.') + (result.finish_reason !== 'completed' ? ' Results may be partial.' : ''));
     if (result.history_error) setStatus('status', result.history_error, true);
     if (result.context_error) setStatus('status', `Answer retained. ${result.context_error}`, true);
     if (result.plan && !result.plan.checks.all_steps_marked_completed) setStatus('status', $('status').textContent + ' Completion checks show unfinished plan steps.');
@@ -676,24 +678,10 @@ async function refreshLinkedIn() {
   try {
     const state = await workspaceRequest('/api/linkedin/status');
     $('linkedin-status').textContent = state.connected ? 'Connected · keep tab open' : state.paired ? 'Waiting for extension / tab' : 'Not connected';
-    if (state.connected) { $('linkedin-code').value = ''; $('linkedin-code-row').hidden = true; }
   } catch { $('linkedin-status').textContent = 'Connection unavailable'; }
 }
-$('linkedin-pair').addEventListener('click', async () => {
-  try {
-    const result = await workspaceRequest('/api/linkedin/pair', {});
-    $('linkedin-code').value = result.code;
-    $('linkedin-code-row').hidden = false;
-    $('linkedin-setup').open = true;
-    await refreshLinkedIn();
-  } catch { $('linkedin-status').textContent = 'Could not create pairing code'; }
-});
-$('linkedin-copy').addEventListener('click', async () => {
-  try { await navigator.clipboard.writeText($('linkedin-code').value); $('linkedin-status').textContent = 'Code copied. Paste into the AgentOS extension.'; }
-  catch { $('linkedin-code').type = 'text'; $('linkedin-code').select(); $('linkedin-status').textContent = 'Select and copy this code manually.'; }
-});
 $('linkedin-disconnect').addEventListener('click', async () => {
-  try { await workspaceRequest('/api/linkedin/disconnect', {}); $('linkedin-code').value = ''; $('linkedin-code-row').hidden = true; await refreshLinkedIn(); }
+  try { await workspaceRequest('/api/linkedin/disconnect', {}); await refreshLinkedIn(); }
   catch { $('linkedin-status').textContent = 'Could not disconnect. Stop AgentOS to revoke access.'; }
 });
 refreshLinkedIn();

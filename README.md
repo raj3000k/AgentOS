@@ -35,7 +35,7 @@ The CLI includes a calculator with `add`, `subtract`, `multiply`, and `divide`. 
 agentos serve
 ```
 
-Open `http://127.0.0.1:8765`. The **Agent studio** turns a short description into an editable agent brief. Open the model connection panel, choose **Run locally** and an installed Ollama model ID, or **Use an API** and **Gemini, OpenAI, Groq, DeepSeek**, or **Custom endpoint**, supplying your own key and model ID. API models are never chosen automatically. Custom endpoints must expose OpenAI-compatible `/chat/completions`; enter the API base URL including its version path. HTTPS is required except for loopback endpoints. Native Anthropic and other incompatible APIs are not supported directly.
+Open `http://127.0.0.1:8765`. The **Agent studio** turns a short description into an editable agent brief. Open the model connection panel, choose **Run locally** and an installed Ollama model ID, or **Use an API** and **Gemini, OpenAI, Groq, DeepSeek**, or **Custom endpoint**, supplying your own key and model ID. For Gemini, [create a key in Google AI Studio](https://aistudio.google.com/apikey), paste it into the password-style API key field, and enter a model ID available to your account. Do not paste keys into chat or commit them. API models are never chosen automatically. Custom endpoints must expose OpenAI-compatible `/chat/completions`; enter the API base URL including its version path. HTTPS is required except for loopback endpoints. Native Anthropic and other incompatible APIs are not supported directly.
 
 Describe an agent in one prompt, such as "An interview coach for backend engineering roles", then choose **Build agent context**. The selected model returns a name, purpose, instructions, starter tasks and assumptions. Review/edit the draft and click **Use this agent** to apply it in the run workspace. Generation uses one model request with no tool execution; the prompt includes the fixed capability catalog or your manual selections. Automatic capability selection is enabled by default and returns editable recommendations with reasons. Applying a draft uses the capability selection you reviewed and does not change your connection. Unsaved drafts and active contexts are in page memory only. Use Save agent to keep a profile locally; My library restores it after reload. You can also use the general assistant or write instructions manually. Generated assumptions may need correction. Web research is available only when explicitly enabled; filesystem access and authenticated browser actions are not implemented.
 
@@ -244,11 +244,11 @@ This repository is being prepared for open sourcing. A license and final public/
 
 ### Connect a logged-in LinkedIn tab (optional)
 
-Keeping LinkedIn open alone does **not** share its login with AgentOS. In Run workspace → Tools & execution limits, use **Connect LinkedIn** and follow **One-time Chrome setup**:
+Keeping LinkedIn open alone does **not** share its login with AgentOS. Connect it directly in the extension; no pairing code or workspace switching is needed:
 
 1. Download the extension ZIP from the workspace and unzip it. In Chrome → Extensions → Developer mode → Load unpacked, select the `agentos-browser-companion` folder. For a source checkout, you can instead load `src/agentos/static/linkedin-extension` directly.
-2. Open your logged-in `https://www.linkedin.com/` tab. Click the AgentOS toolbar icon, open the side panel’s Settings → LinkedIn job tab connection, paste the pairing code generated in AgentOS and choose **Connect current LinkedIn tab**.
-3. Wait for **Connected**, select **Connected LinkedIn tab** in the agent capabilities, and run the agent. Keep LinkedIn logged in and that connected tab open beside AgentOS; the agent will navigate it during job research. Use a dedicated LinkedIn tab to avoid interrupting your own browsing.
+2. Open your logged-in `https://www.linkedin.com/` tab. Click the AgentOS toolbar icon, choose **Connect this LinkedIn tab** in the card at the top of the panel. The extension connects to the local workspace and pairs securely behind the scenes.
+3. Wait for **CONNECTED**. The companion enables LinkedIn job research for its next task; in the full workspace select **Connected LinkedIn tab** in the agent capabilities, and run the agent. Keep LinkedIn logged in and that connected tab open beside AgentOS; the agent will navigate it during job research. Use a dedicated LinkedIn tab to avoid interrupting your own browsing.
 
 This extension currently supports Chrome and the default workspace address `http://127.0.0.1:8765`. Custom workspace ports require adjusting the extension's fixed host permission and bridge address. The extension stores only the selected tab ID and a separate bridge credential in Chrome session memory. It never exports login cookies, passwords or a browser profile. Pairing/disconnect/restart rotates or revokes access; browser restart requires reconnecting. AgentOS status is based on the extension heartbeat, not independent proof that LinkedIn login is valid. Sign-in or verification walls require the user to take over.
 
@@ -266,7 +266,7 @@ The bundled extension now opens a browser side panel (Chrome 116+) with a source
 3. Choose **Add current tab** to capture a visible text excerpt. For another tab, click the toolbar icon on that tab before adding it. Up to four pages, 3,500 characters of text and observed links each; click a source title to preview what will be sent. Adding the same tab refreshes its snapshot. The panel does not scan or automatically read every open tab.
 4. Ask for a summary, extraction or comparison. Selected snapshots are sent to the chosen model on Send. Follow-ups retain prior context. Removing a source affects subsequent snapshots but cannot remove evidence from earlier conversation context; **New chat** clears that context, while **Clear sources & chat** clears both.
 
-General source tabs are snapshots, not an autonomous navigation/click interface. Public web research is a separate opt-in setting; LinkedIn navigation uses the separately paired job-tab tools described above. The source reader excludes forms/inputs/editable areas and common navigation, not every possible sensitive statement in page text: preview and choose sources accordingly. No automatic application submission, arbitrary model scripts or all-site permission. Normal site scripts still run in the browser.
+General source tabs are snapshots, not an autonomous navigation/click interface. Public web research is a separate opt-in setting; LinkedIn navigation uses the explicitly connected job-tab tools described above. The source reader excludes forms/inputs/editable areas and common navigation, not every possible sensitive statement in page text: preview and choose sources accordingly. No automatic application submission, arbitrary model scripts or all-site permission. Normal site scripts still run in the browser.
 
 Sources, non-secret model preferences and bounded conversation state use Chrome session storage, cleared on browser exit; a panel close alone does not clear them. Workspace authorization remains in background memory; provider API keys stay in the panel and active request only and must be re-entered after panel close. Provider/model/capability changes require New chat before another run. Extension suspension can interrupt an active connection; restored state labels it interrupted rather than claiming completion. Runs use the normal isolated AgentOS stream, five-minute deadline and Stop endpoint, with workspace history off. General research snapshots may contain private page data and are shared with the selected model; public tool reads retain their existing restrictions.
 
@@ -279,3 +279,20 @@ Installed-extension UAT (2026-10-20): explicit activeTab capture, local workspac
 For local research tasks, make sure Ollama has enough context for tool schemas and posting evidence. The live UAT initially used 4,096 tokens, which may constrain a multi-posting tool conversation; the UAT did not prove this was the sole cause of incomplete research. This machine's retry uses `OLLAMA_CONTEXT_LENGTH=16384 ollama serve`; verify actual allocation with `ollama ps` or `/api/ps`. More context uses more memory, so choose a size your model/hardware can support; this remains a local runtime choice rather than an SDK-forced default. See [Ollama context documentation](https://docs.ollama.com/context-length).
 
 LinkedIn reader compatibility now distinguishes hidden CAPTCHA widgets from visible challenges, supports the observed generic standalone-job layout, and decodes exposed safety/go application redirects through public-URL validation. Missing or Easy Apply destinations are not evidence of closure. Genuine login/verification challenges still require user action; no bypass was added. An unmatched modern description boundary stays unavailable rather than exposing unrelated account content.
+
+
+### One-time Gemini run from a local key file
+
+Copy `.env.example` to `.env.local` and enter `GEMINI_API_KEY=your_key` in the local file. `.env` and `.env.*` are ignored except the empty example. Then run:
+
+```sh
+.venv/bin/agentos run "Use calculate to compute 19 * 23" --provider gemini --model gemini-3.5-flash-lite --api-key-env GEMINI_API_KEY --env-file .env.local
+```
+
+The file is loaded only when explicitly selected, for that CLI call. It does not populate the workspace/extension or persist the key. File values take precedence over exported variables. Format: literal KEY=value lines, optional matching quotes, whole-line comments; no export statements, shell execution, escapes or variable interpolation. Other entries are not exported. Keep real keys out of the example. A model listing or key-file read does not establish free quota or successful inference.
+
+
+Isolated workspace runs retain collected task-tool evidence if a later provider request fails (for example quota HTTP 429). These return `partial` with `limit_reason=provider_error`; no automatic retry or tool replay occurs. A failure before task-tool evidence still reports an error. SDK/CLI provider exception behavior is unchanged.
+
+
+Connected posting reads can return explicitly labeled partial fields if the description misses its loading deadline. An observed title/application URL does not establish missing experience requirements or an open matching role; the full evidence review still applies.

@@ -64,6 +64,10 @@ class LinkedInBridge:
             return {'connected': bool(self.secret and time.monotonic() - self.last_seen < 10),
                     'paired': bool(self.secret)}
 
+    def heartbeat(self):
+        with self.lock:
+            self.last_seen = time.monotonic()
+
     def poll(self):
         with self.lock:
             self.last_seen = time.monotonic()
@@ -176,8 +180,10 @@ class LinkedInSession:
                                'checked_at': datetime.now(timezone.utc).isoformat(),
                                'title': str(page.get('title', ''))[:180], 'company': str(page.get('company', ''))[:120],
                                'location': str(page.get('location', ''))[:180], 'description': description[:6000],
-                               'description_truncated': len(description) > 6000, 'experience_requirements': experience(description),
+                               'description_truncated': len(description) > 6000, 'description_status': 'complete' if description and page.get('description_status') != 'partial' else 'partial',
+                               'experience_requirements': experience(description),
                                'application_url': None if closed else target or (source if easy else None),
                                'apply_status': 'closed' if closed else 'external_link_found' if target else 'linkedin_easy_apply' if easy else 'not_exposed',
                                'verification': 'closed' if closed else 'posting_read_not_confirmed_open',
-                               'note': 'Visible authenticated-tab evidence; extracted application links still require destination verification. Session/cookies are never returned.'})
+                               'note': ('Visible authenticated-tab evidence; extracted application links still require destination verification. Session/cookies are never returned.'
+                                        + (' Description is incomplete; missing role requirements and availability must not be inferred.' if not description or page.get('description_status') == 'partial' else ''))})

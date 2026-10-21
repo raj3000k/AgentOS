@@ -63,6 +63,23 @@ def fixture_worker(source):
 
 
 class ExecutionTests(unittest.TestCase):
+    def test_provider_failure_after_tool_keeps_partial_evidence_without_retry(self):
+        call = {'function': {'name': 'calculate', 'arguments': {'a': 19, 'operation': 'multiply', 'b': 23}}}
+        with server([(200, response('', [call])), (429, {'error': 'untrusted secret'})]) as (url, requests):
+            result = run_isolated(config(url), run_timeout=5)
+        self.assertEqual(result.finish_reason, 'partial')
+        self.assertEqual(result.limit_reason, 'provider_error')
+        self.assertEqual((result.model_calls, result.tool_calls), (2, 1))
+        self.assertEqual(len(requests), 2)
+        self.assertIn('437', result.content)
+        self.assertNotIn('execution budget was reached', result.content)
+        self.assertNotIn('untrusted secret', result.content)
+        self.assertEqual(result.conversation[-1]['status'], 'partial')
+        self.assertEqual(result.conversation[-1]['evidence'][0]['name'], 'calculate')
+        with server([(429, {})]) as (url, _):
+            with self.assertRaises(ProviderError):
+                run_isolated(config(url), run_timeout=5)
+
     def test_real_worker_tool_roundtrip_followup_and_reaping(self):
         call = {'function':{'name':'calculate','arguments':{'a':2,'operation':'multiply','b':2}}}
         processes=[]

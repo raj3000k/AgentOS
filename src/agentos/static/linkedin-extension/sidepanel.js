@@ -1,6 +1,6 @@
 const $=id=>document.getElementById(id);
 const element=(tag,text,className)=>{const node=document.createElement(tag);if(text!==undefined)node.textContent=text;if(className)node.className=className;return node;};
-let state={}, settings={provider:'ollama',model:'qwen3:8b',base_url:'http://localhost:11434',api_key:''}, chatSignature='', sourceSignature='', refreshing=false, followAnswer=false;
+let state={}, settings={provider:'ollama',model:'qwen3:8b',base_url:'http://localhost:11434',api_key:''}, chatSignature='', sourceSignature='', refreshing=false, followAnswer=false, connectingLinkedIn=false;
 async function message(type,extra={}) {
   const result=await chrome.runtime.sendMessage({type,...extra});
   if (!result || result.error) throw new Error(result?.error || 'Extension unavailable. Reload it in Chrome Extensions.');
@@ -77,6 +77,14 @@ async function refresh(){
     $('connect-workspace').textContent=state.connected?'Connected':'Connect';$('connect-workspace').disabled=state.connected;
     $('send').disabled=!state.connected||state.running;
     $('new-chat').disabled=state.running;$('add-source').disabled=state.running;$('open-settings').disabled=state.running;$('model-button').disabled=state.running;
+    const tab=state.linkedinTab||{}, linked=tab.connected;
+    $('linkedin-badge').textContent=linked?'CONNECTED':tab.paired?'RECONNECT NEEDED':'NOT CONNECTED';
+    $('linkedin-badge').classList.toggle('is-connected',!!linked);
+    $('linkedin-title').textContent=linked?'LinkedIn is ready.':tab.eligible?'Your tab. Ready to work.':'Bring your LinkedIn tab.';
+    $('linkedin-description').textContent=linked?'Your agent can research jobs in the connected tab. Keep it open and logged in.':tab.eligible?'Connect this tab directly to AgentOS. No codes, no switching windows.':'Open LinkedIn and click the AgentOS toolbar icon there, then return here to connect.';
+    $('connect-linkedin').textContent=connectingLinkedIn?'Connecting…':linked&&tab.current?'Connected to this tab':linked?'Use this LinkedIn tab':'Connect this LinkedIn tab ↗';
+    $('connect-linkedin').disabled=connectingLinkedIn||state.running||!tab.eligible||linked&&tab.current;
+    $('disconnect-linkedin').hidden=!tab.paired;$('disconnect-linkedin').disabled=state.running||connectingLinkedIn;
     renderSources(state.sources||[]);renderChat(state.turns||[]);
     $('progress').hidden=!state.running&&!state.activity?.length;
     $('progress').classList.toggle('running',state.running);$('progress-label').textContent=state.status;
@@ -88,6 +96,10 @@ async function refresh(){
   }catch(error){notice(error.message);}
   finally{refreshing=false;}
 }
+async function saveSafeSettings(){
+  const {api_key,...safe}=settings;
+  await chrome.storage.session.set({companionSettings:{...safe,web:$('web-research').checked,linkedin:$('linkedin-research').checked,plan:$('plan-task').checked}});
+}
 async function act(type,extra={}){try{notice('');await message(type,extra);await refresh();}catch(error){notice(error.message);}}
 $('connect-workspace').addEventListener('click',()=>act('companion-connect'));
 $('add-source').addEventListener('click',()=>act('companion-add'));
@@ -98,18 +110,22 @@ $('close-settings').addEventListener('click',()=>$('settings').close());
 $('settings-form').addEventListener('submit',async event=>{
   event.preventDefault();
   settings={provider:$('provider').value,model:$('model').value.trim(),base_url:['ollama','custom'].includes($('provider').value)?$('endpoint').value.trim():'',api_key:$('api-key').value.trim()};
-  const {api_key,...safe}=settings;
-  await chrome.storage.session.set({companionSettings:{...safe,web:$('web-research').checked,linkedin:$('linkedin-research').checked,plan:$('plan-task').checked}});
+  await saveSafeSettings();
   $('model-button').textContent='◈ '+settings.model;
   $('sharing-note').textContent=settings.provider==='ollama'?'Selected page snapshots go to your local model when you send.':'Selected page snapshots go to '+settings.provider+' when you send.';
   $('settings').close();notice(state.turns?.length?'Changed model or capabilities? Start a new chat before sending.':'');
 });
 $('connect-linkedin').addEventListener('click',async()=>{
-  const [tab]=await chrome.tabs.query({active:true,currentWindow:true});const code=$('linkedin-code').value.trim();
-  if(!tab || !/^https:\/\/www\.linkedin\.com\//.test(tab.url||'') || !/^[\w-]{40,100}$/.test(code)){notice('Open your LinkedIn tab, click the AgentOS toolbar icon and paste a valid pairing code.');return;}
-  await act('connect',{tabId:tab.id,code});$('linkedin-code').value='';notice('LinkedIn tab selected. Check connection status in the full workspace.');
+  if(connectingLinkedIn)return;
+  connectingLinkedIn=true;$('connect-linkedin').disabled=true;$('connect-linkedin').textContent='Connecting…';
+  try{
+    notice('');await message('companion-linkedin-connect');
+    $('linkedin-research').checked=true;await saveSafeSettings();
+    notice('LinkedIn connected. Job research is enabled for your next task.');
+  }catch(error){notice(error.message);}
+  finally{connectingLinkedIn=false;await refresh();}
 });
-$('disconnect-linkedin').addEventListener('click',()=>act('disconnect'));
+$('disconnect-linkedin').addEventListener('click',async()=>{try{await message('disconnect');$('linkedin-research').checked=false;await saveSafeSettings();await refresh();notice('LinkedIn disconnected.');}catch(error){notice(error.message);}});
 $('disconnect-workspace').addEventListener('click',()=>act('companion-disconnect'));
 $('clear-session').addEventListener('click',()=>act('companion-clear'));
 for(const button of document.querySelectorAll('[data-prompt]'))button.addEventListener('click',()=>{$('prompt').value=button.dataset.prompt;$('prompt').focus();});

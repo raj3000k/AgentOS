@@ -76,6 +76,21 @@ class ProviderTests(unittest.TestCase):
                     CompatibleClient(url, "secret-key").chat(model="chosen", messages=[], tools=[])
                 self.assertNotIn("secret-key", str(caught.exception))
 
+    def test_safe_provider_diagnostics_never_echo_raw_errors(self):
+        cases = [
+            (400, {'error': {'status': 'INVALID_ARGUMENT', 'message': 'secret-key',
+                            'details': [{'reason': 'API_KEY_INVALID'}]}}, 'API_KEY_INVALID'),
+            (503, {'error': {'status': 'UNAVAILABLE', 'message': 'secret-key'}}, 'UNAVAILABLE'),
+            (403, {'error': {'status': 'secret-key'}}, 'Check account access'),
+            (503, {'error': {'status': ['not a string']}}, 'temporarily unavailable'),
+        ]
+        for status, payload, expected in cases:
+            with self.subTest(status=status), server([(status, payload)]) as (url, _):
+                with self.assertRaises(ProviderError) as caught:
+                    CompatibleClient(url, 'secret-key').chat(model='chosen', messages=[], tools=[])
+                self.assertIn(expected, str(caught.exception))
+                self.assertNotIn('secret-key', str(caught.exception))
+
     def test_cli_api_key_from_environment(self):
         output = io.StringIO()
         with server([(200, completion({"role": "assistant", "content": "Hello"}))]) as (url, requests):

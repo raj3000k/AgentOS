@@ -97,6 +97,22 @@ class LinkedInSessionTests(unittest.TestCase):
             self.assertIsNone(result['application_url'])
         self.assertEqual(LinkedInSession()._read('https://www.linkedin.com/jobs/view/123')['status'], 'session_disconnected')
 
+    def test_partial_posting_does_not_invent_experience_or_confirm_match(self):
+        bridge = LinkedInBridge()
+        page = {'status': 'read', 'title': 'Software Engineer I', 'company': 'Example',
+                'location': 'Bengaluru', 'description': '', 'description_status': 'partial',
+                'application_url': 'https://example.com/jobs/123'}
+        with patch.object(bridge, 'read', return_value=page):
+            tools, _ = build_capabilities(['linkedin_session'], linkedin_bridge=bridge)
+            registry = {entry.name: entry for entry in tools}
+            result = registry['inspect_linkedin_session_job'].function('https://www.linkedin.com/jobs/view/123/')
+            self.assertEqual(result['description_status'], 'partial')
+            self.assertIsNone(result['experience_requirements']['minimum_years'])
+            self.assertEqual(result['application_url'], page['application_url'])
+            review = registry['review_job_results'].function()
+            self.assertEqual(review['counts']['confirmed_match'], 0)
+            self.assertEqual(review['counts']['uncertain'], 1)
+
     def test_isolated_worker_uses_bridge_without_exposing_pairing_secret(self):
         from agentos.execution import run_isolated
         from test_execution import config
@@ -164,6 +180,10 @@ class LinkedInSessionTests(unittest.TestCase):
                     break
                 time.sleep(.005)
             self.assertTrue(command)
+            with self.assertRaises(urllib.error.HTTPError):
+                request('/api/linkedin/heartbeat', key='wrong', header='X-AgentOS-Bridge')
+            self.assertTrue(request('/api/linkedin/heartbeat', key=code, header='X-AgentOS-Bridge')['connected'])
+            self.assertIsNone(request('/api/linkedin/poll', key=code, header='X-AgentOS-Bridge')['command'])
             request('/api/linkedin/reply', {'id':command['id'],'status':'read','links':[
                 {'text':'Software Engineer I','url':'https://www.linkedin.com/jobs/view/123'},
                 {'text':'Duplicate','url':'https://www.linkedin.com/jobs/view/123'},

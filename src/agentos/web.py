@@ -76,9 +76,12 @@ def make_server(port=8765, *, request_token=None, storage_path=None, isolate_run
                 if self.headers.get('X-AgentOS-Token') != token:
                     return self.send(403, {'error': 'Reload the workspace'})
                 return self.send(200, linkedin.status())
-            if self.path == '/api/linkedin/poll':
+            if self.path in ('/api/linkedin/poll', '/api/linkedin/heartbeat'):
                 if not linkedin.authorized(self.headers.get('X-AgentOS-Bridge')):
                     return self.send(403, {'error': 'Reconnect LinkedIn'})
+                if self.path.endswith('/heartbeat'):
+                    linkedin.heartbeat()
+                    return self.send(200, {'connected': True})
                 return self.send(200, {'command': linkedin.poll()})
             if self.path == "/api/workspace":
                 return self.send(200, {"enabled": store is not None, "isolated_runs": isolate_runs})
@@ -142,7 +145,7 @@ def make_server(port=8765, *, request_token=None, storage_path=None, isolate_run
                 except (ValueError, TypeError, OSError):
                     return self.send(400, {'error': 'Invalid or expired LinkedIn command'})
             origin = self.headers.get("Origin")
-            extension_run = (self.path in ('/api/run/stream', '/api/run/stop') and isinstance(origin, str)
+            extension_run = (self.path in ('/api/run/stream', '/api/run/stop', '/api/linkedin/pair') and isinstance(origin, str)
                              and re.fullmatch(r'chrome-extension://[a-p]{32}', origin) is not None)
             if (not self.allowed() or self.headers.get("X-AgentOS-Token") != token
                     or (origin is not None and origin != f"http://127.0.0.1:{self.server.server_port}" and not extension_run)):

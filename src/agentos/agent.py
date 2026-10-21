@@ -221,8 +221,12 @@ class Agent:
                      ok=json.loads(result).get("ok", False))
         raise RunLimitError("Model step limit reached")
 
-    def _partial_result(self, messages, model_calls, tool_count, limit_reason):
-        lines = ["Partial results: the execution budget was reached and the model did not provide a final summary.",
+    @staticmethod
+    def _partial_result(messages, model_calls, tool_count, limit_reason):
+        heading = ("Partial results: the provider request failed after tool execution; no final model summary is available."
+                   if limit_reason == "provider_error" else
+                   "Partial results: the execution budget was reached and the model did not provide a final summary.")
+        lines = [heading,
                  "Only collected tool evidence is shown below; it may be incomplete or unverified."]
         collected = 0
         for message in messages:

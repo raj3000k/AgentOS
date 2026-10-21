@@ -78,9 +78,26 @@ class CompatibleClient:
                     raise ValueError()
             return message
         except urllib.error.HTTPError as exc:
-            hints = {401: "Check your API key.", 403: "Check account access.",
-                     404: "Check the model ID and endpoint.", 429: "Rate limit or quota reached."}
-            raise ProviderError(f"Provider returned HTTP {exc.code}. {hints.get(exc.code, 'Request failed.')}".strip()) from None
+            # Only expose fixed diagnostic labels, never provider text that may echo secrets.
+            diagnostic = ''
+            try:
+                payload = json.loads(exc.read(65537))
+                error = payload.get('error', {}) if isinstance(payload, dict) else {}
+                if isinstance(error, dict):
+                    status = error.get('status')
+                    known = {'INVALID_ARGUMENT', 'UNAUTHENTICATED', 'PERMISSION_DENIED',
+                             'NOT_FOUND', 'RESOURCE_EXHAUSTED', 'UNAVAILABLE', 'INTERNAL'}
+                    if isinstance(status, str) and status in known:
+                        diagnostic = f' ({status})'
+                    details = error.get('details', [])
+                    if isinstance(details, list) and any(isinstance(row, dict) and row.get('reason') == 'API_KEY_INVALID' for row in details):
+                        diagnostic = ' (API_KEY_INVALID)'
+            except (ValueError, TypeError, OSError):
+                pass
+            hints = {400: "Check request parameters and API key restrictions.", 401: "Check your API key.", 403: "Check account access.",
+                     404: "Check the model ID and endpoint.", 429: "Rate limit or quota reached.",
+                     503: "Provider temporarily unavailable; retry later. This response does not validate the key or model."}
+            raise ProviderError(f"Provider returned HTTP {exc.code}{diagnostic}. {hints.get(exc.code, 'Request failed.')}".strip()) from None
         except (urllib.error.URLError, OSError):
             raise ProviderError("Cannot reach provider or request timed out") from None
         except (ValueError, KeyError, IndexError, TypeError, AttributeError):

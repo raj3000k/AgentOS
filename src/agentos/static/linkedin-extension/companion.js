@@ -81,6 +81,43 @@ async function companionRequest(path, data) {
   }
   return response;
 }
+function isLinkedInTab(tab) {
+  try { return new URL(tab?.url).origin==='https://www.linkedin.com'; } catch { return false; }
+}
+function checkLinkedInOrigin() { return location.origin==='https://www.linkedin.com'; }
+async function connectCurrentLinkedIn() {
+  if(companionState.running)throw new Error('Stop the active run before changing its connected tab.');
+  const [tab]=await chrome.tabs.query({active:true,currentWindow:true});
+  if(!isLinkedInTab(tab))throw new Error('Open LinkedIn, click the AgentOS toolbar icon there, then connect this tab.');
+  let permission;
+  try{permission=await chrome.scripting.executeScript({target:{tabId:tab.id},func:checkLinkedInOrigin});}
+  catch{throw new Error('Click the AgentOS toolbar icon on this LinkedIn tab to allow access, then connect again.');}
+  if(permission[0]?.result!==true)throw new Error('The selected tab is no longer on LinkedIn.');
+  await connectWorkspace();
+  const response=await companionRequest('/api/linkedin/pair',{});
+  const {code}=await response.json();
+  if(typeof code!=='string'||!/^[\w-]{40,100}$/.test(code))throw new Error('Update and restart AgentOS to connect this tab.');
+  const heartbeat=await fetch(workspaceURL+'/api/linkedin/heartbeat',{credentials:'omit',headers:{'X-AgentOS-Bridge':code}});
+  if(!heartbeat.ok)throw new Error('AgentOS restarted while connecting. Try Connect this tab again.');
+  await chrome.storage.session.set({connection:{tabId:tab.id,code}});
+  await chrome.alarms.create('poll',{periodInMinutes:0.5});
+  return {connected:true};
+}
+async function linkedInTabState(connection) {
+  const [activeTab]=await chrome.tabs.query({active:true,currentWindow:true});
+  let connected=false;
+  if(connection && workspaceToken){
+    try{
+      const tab=await chrome.tabs.get(connection.tabId);
+      if(isLinkedInTab(tab)){
+        const response=await fetch(workspaceURL+'/api/linkedin/status',{credentials:'omit',headers:{'X-AgentOS-Token':workspaceToken}});
+        if(response.ok)connected=(await response.json()).connected===true;
+        else if(response.status===403)workspaceToken='';
+      }
+    }catch{}
+  }
+  return {connected,paired:!!connection,eligible:isLinkedInTab(activeTab),current:connection?.tabId===activeTab?.id};
+}
 function addActivity(text) {
   companionState.status=text;
   companionState.activity.push(text);
@@ -105,7 +142,7 @@ async function startCompanionRun(payload) {
   const capabilities=['calculator'];
   if (payload.web) capabilities.push('web_research','job_boards');
   if (payload.linkedin) {
-    if (!connection) throw new Error('Pair a LinkedIn tab in Settings before enabling LinkedIn research.');
+    if (!connection) throw new Error('Connect your LinkedIn tab using the card above before enabling LinkedIn research.');
     capabilities.push('linkedin_session');
   }
   const id=crypto.randomUUID();
@@ -177,10 +214,12 @@ chrome.runtime.onMessage.addListener((message,sender,respond)=>{
     await companionReady;
     switch(message.type) {
       case 'companion-connect': await connectWorkspace(); return {connected:true};
+      case 'companion-linkedin-connect': return connectCurrentLinkedIn();
       case 'companion-state': {
         const stored=await chrome.storage.session.get([sourceKey,'connection']);
         const {history,...visibleState}=companionState;
-        return {connected:!!workspaceToken,...visibleState,sources:stored[sourceKey] || [],linkedin:!!stored.connection};
+        const linkedinTab=await linkedInTabState(stored.connection);
+        return {connected:!!workspaceToken,...visibleState,sources:stored[sourceKey] || [],linkedin:!!stored.connection,linkedinTab};
       }
       case 'companion-add': return {sources:await addCurrentSource()};
       case 'companion-remove': {

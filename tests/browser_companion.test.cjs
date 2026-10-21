@@ -7,7 +7,7 @@ global.chrome={
  runtime:{id:'test-extension',getURL:path=>'chrome-extension://test-extension/'+path,onMessage:{addListener:fn=>listeners.push(fn)}},
  storage:{session:{get:async keys=>{if(typeof keys==='string')return {[keys]:store[keys]};return Object.fromEntries(keys.map(key=>[key,store[key]]));},set:async values=>Object.assign(store,JSON.parse(JSON.stringify(values))),remove:async key=>{delete store[key];}}},
  tabs:{query:async()=>[active],onRemoved:{addListener:()=>{}}},scripting:{executeScript:async({func})=>{extractor=func;return [{result:{title:'Source '+active.id,url:active.url,text:'Visible article facts',checked_at:'2026-10-20T00:00:00Z',truncated:false}}];}},
- alarms:{onAlarm:{addListener:()=>{}}},
+ alarms:{create:async()=>{},onAlarm:{addListener:()=>{}}},
  action:{onClicked:{addListener:()=>{}}},sidePanel:{open:async()=>{}}
 };
 global.crypto=require('node:crypto').webcrypto;
@@ -112,4 +112,55 @@ test('modern LinkedIn job page extracts scoped details and visible company apply
  assert.match(result.description,/Required experience/);assert.ok(!result.description.includes('PRIVATE'));assert.equal(result.application_url,anchor.href);
  root.innerText='About the job\nMissing a safe end boundary';assert.equal(background.readJobPage().description,'');
  delete global.document;delete global.location;delete global.getComputedStyle;delete global.innerWidth;delete global.innerHeight;
+});
+
+
+test('posting deadline preserves partial observed fields but not empty or navigated pages',async()=>{
+ const oldNow=Date.now,oldTimeout=global.setTimeout,oldGet=chrome.tabs.get,oldExecute=chrome.scripting.executeScript;
+ let now=1000000;
+ Date.now=()=>now+=1000;global.setTimeout=fn=>{fn();return 0;};
+ store.connection={tabId:7,code:'test'};
+ const url='https://www.linkedin.com/jobs/view/123/';
+ chrome.tabs.get=async()=>({url,status:'complete'});
+ let observed={status:'read',title:'Software Engineer I',description:'',application_url:'https://example.com/jobs/123',url};
+ chrome.scripting.executeScript=async()=>[{result:observed}];
+ try{
+  const result=await background.readWhenReady(7,{url,expires_at:1004});
+  assert.equal(result.description_status,'partial');assert.equal(result.application_url,observed.application_url);
+  assert.equal(result.description,'');assert.match(result.note,/partial evidence/);
+  now=1000000;observed={status:'read',title:'',description:''};
+  assert.equal((await background.readWhenReady(7,{url,expires_at:1004})).status,'no_job_details');
+  now=1000000;chrome.tabs.get=async()=>({url:'https://www.linkedin.com/feed/',status:'complete'});
+  assert.equal((await background.readWhenReady(7,{url,expires_at:1004})).status,'session_unavailable');
+ }finally{Date.now=oldNow;global.setTimeout=oldTimeout;chrome.tabs.get=oldGet;chrome.scripting.executeScript=oldExecute;delete store.connection;}
+});
+
+
+test('one-click LinkedIn pairing validates current tab permission and keeps credentials internal',async()=>{
+ const oldFetch=global.fetch,oldExecute=chrome.scripting.executeScript,oldGet=chrome.tabs.get;
+ let paired=false,pairCalls=0;
+ const bridge='b'.repeat(43);
+ global.fetch=async(url,options={})=>{
+  if(url.endsWith('/api/linkedin/pair')){pairCalls++;assert.equal(options.headers['X-AgentOS-Token'],token);return {ok:true,json:async()=>({code:bridge})};}
+  if(url.endsWith('/api/linkedin/heartbeat')){assert.equal(options.headers['X-AgentOS-Bridge'],bridge);paired=true;return {ok:true};}
+  if(url.endsWith('/api/linkedin/status'))return {ok:true,json:async()=>({connected:paired,paired})};
+  return oldFetch(url,options);
+ };
+ chrome.tabs.get=async()=>active;
+ try{
+  active={id:77,url:'https://example.com/'};
+  assert.match((await message('companion-linkedin-connect')).error,/Open LinkedIn/);assert.equal(pairCalls,0);
+  active={id:77,url:'https://www.linkedin.com/jobs/'};
+  chrome.scripting.executeScript=async()=>{throw new Error('No activeTab grant');};
+  assert.match((await message('companion-linkedin-connect')).error,/toolbar icon/);assert.equal(pairCalls,0);
+  chrome.scripting.executeScript=async()=>[{result:true}];
+  assert.deepEqual(await message('companion-linkedin-connect'),{connected:true});
+  assert.equal(pairCalls,1);assert.equal(store.connection.tabId,77);assert.equal(store.connection.code,bridge);
+  const state=await message('companion-state');
+  assert.equal(state.linkedinTab.connected,true);assert.equal(state.linkedinTab.current,true);
+  assert.ok(!JSON.stringify(state).includes(bridge));assert.ok(!JSON.stringify(store).includes(token));
+  const html=fs.readFileSync('src/agentos/static/linkedin-extension/sidepanel.html','utf8');
+  assert.ok(html.includes('Connect this LinkedIn tab'));assert.ok(!html.includes('id="linkedin-code"'));
+  paired=false;assert.equal((await message('companion-state')).linkedinTab.connected,false);
+ }finally{global.fetch=oldFetch;chrome.scripting.executeScript=oldExecute;chrome.tabs.get=oldGet;delete store.connection;}
 });

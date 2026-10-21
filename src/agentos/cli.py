@@ -3,10 +3,10 @@
 import argparse
 from dataclasses import asdict
 import json
-import os
 import sys
 
 from .agent import Agent
+from .env_config import api_key_from_env
 from .errors import AgentOSError
 from .providers import create_client
 from .capabilities import IDS, build_capabilities
@@ -21,6 +21,7 @@ def main(argv: list[str] | None = None) -> int:
     run.add_argument("--model", default=None)
     run.add_argument("--provider", choices=["ollama", "gemini", "openai", "groq", "deepseek", "custom"], default="ollama")
     run.add_argument("--api-key-env", default="AGENTOS_API_KEY", help="Environment variable containing your API key")
+    run.add_argument("--env-file", help="Explicit KEY=value file for the named API key; no shell evaluation")
     run.add_argument("--host", default="", help="Ollama origin or custom API base URL")
     run.add_argument("--timeout", type=float, default=120)
     run.add_argument("--max-steps", type=int, default=8)
@@ -43,7 +44,7 @@ def main(argv: list[str] | None = None) -> int:
         if not model:
             raise ValueError("Select an API model with --model")
         client = create_client(args.provider, base_url=args.host, timeout=args.timeout,
-                               api_key="" if args.provider == "ollama" else os.environ.get(args.api_key_env, ""))
+                               api_key="" if args.provider == "ollama" else api_key_from_env(args.api_key_env, args.env_file))
         if args.no_tools and (args.web_research or args.capability):
             raise ValueError("--no-tools cannot be combined with enabled capabilities")
         selected = ([] if args.no_tools else ['calculator']) + args.capability

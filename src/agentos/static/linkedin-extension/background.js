@@ -71,6 +71,7 @@ function readJobPage() {
 }
 async function readWhenReady(tabId, command) {
   const requested = new URL(command.url);
+  let partial;
   while (Date.now()/1000 < command.expires_at - 2) {
     const {connection} = await chrome.storage.session.get('connection');
     if (!connection || connection.tabId !== tabId) return {status:'session_disconnected'};
@@ -84,14 +85,25 @@ async function readWhenReady(tabId, command) {
       return {status:'session_unavailable',error:'Selected tab navigated away from the requested job page.'};
     const results = await chrome.scripting.executeScript({target:{tabId},func:readJobPage});
     const result = results[0]?.result;
+    if (result?.status === 'read' && result.title && requested.pathname !== '/jobs/search/') partial = result;
     if (result?.status === 'login_required' || result?.status === 'read' &&
         (requested.pathname === '/jobs/search/' ? result.links.length : result.title && result.description)) return result;
     await new Promise(resolve=>setTimeout(resolve,700));
   }
+  if (partial) return {...partial,description_status:'partial',note:'Posting description did not load completely before the deadline. Available fields are partial evidence; do not infer missing requirements or confirmed availability.'};
   return {status:'no_job_details',error:'Job page did not finish loading within the read deadline.'};
 }
 async function poll() {
-  if (working) return;
+  if (working) {
+    try {
+      const {connection}=await chrome.storage.session.get('connection');
+      if (!connection) return;
+      const tab=await chrome.tabs.get(connection.tabId);
+      if (!/^https:\/\/www\.linkedin\.com\//.test(tab.url||'')) return;
+      await fetch(base+'heartbeat',{headers:{'X-AgentOS-Bridge':connection.code}});
+    } catch { /* Unavailable tabs must not refresh connection status. */ }
+    return;
+  }
   working = true;
   let connection;
   try {
@@ -123,4 +135,4 @@ chrome.tabs.onRemoved.addListener(async id=>{
 
 importScripts('companion.js');
 
-if(typeof module!=='undefined' && module.exports)module.exports={readJobPage};
+if(typeof module!=='undefined' && module.exports)module.exports={readJobPage,readWhenReady};

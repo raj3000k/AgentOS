@@ -1,12 +1,13 @@
 """Private subprocess entry point. Only the fixed capability registry can execute."""
 from contextlib import redirect_stdout
-from dataclasses import asdict
+from dataclasses import asdict, replace
 import json
 import sys
 
 from .agent import Agent
 from .capabilities import build_capabilities
-from .errors import AgentOSError
+from .errors import AgentOSError, ProviderError
+from .conversation import append_turn
 from .providers import create_client
 
 
@@ -16,6 +17,13 @@ def main():
     def send(message):
         channel.write(json.dumps(message, allow_nan=False) + '\n')
         channel.flush()
+
+    latest = None
+
+    def checkpoint(state):
+        nonlocal latest
+        latest = state
+        send({'type': 'checkpoint', 'data': state})
 
     try:
         config = json.loads(sys.stdin.read(524289))
@@ -32,8 +40,20 @@ def main():
                           finalize_on_limit=bool(tools))
             result = agent.run(config['prompt'], history=config['history'], plan_task=config.get('plan_task', False),
                                on_event=lambda event: send({'type': 'event', 'data': event}),
-                               on_checkpoint=lambda state: send({'type': 'checkpoint', 'data': state}))
+                               on_checkpoint=checkpoint)
             send({'type': 'result', 'data': asdict(result)})
+    except ProviderError as provider_error:
+        if latest and any(message.get('role') == 'tool' and message.get('tool_name') != 'update_task_plan'
+                          for message in latest['messages']):
+            result = Agent._partial_result(latest['messages'], latest['model_calls'], latest['tool_calls'], 'provider_error')
+            result = replace(result, plan=latest.get('plan'))
+            try:
+                result = replace(result, conversation=append_turn(config['history'], config['prompt'], result))
+            except ValueError as exc:
+                result = replace(result, context_error=str(exc))
+            send({'type': 'result', 'data': asdict(result)})
+        else:
+            send({'type': 'error', 'error': str(provider_error)})
     except AgentOSError as exc:
         send({'type': 'error', 'error': str(exc)})
     except Exception:

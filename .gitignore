@@ -10,3 +10,7 @@ work/
 outputs/
 
 .agentos/
+
+.env
+.env.*
+!.env.example
