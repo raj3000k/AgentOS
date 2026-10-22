@@ -82,3 +82,12 @@ test('Gemini compatibility request stays server managed and rejects incomplete t
  let captured;await assert.rejects(chat(cfg,[],[],async(url,options)=>{captured={url,options};return Response.json({choices:[{finish_reason:'length',message:{role:'assistant',content:'truncated'}}]});}));assert.equal(captured.options.headers.Authorization,'Bearer '+cfg.key);assert.equal(JSON.parse(captured.options.body).model,cfg.model);
  await assert.rejects(chat(cfg,[],[],async()=>Response.json({choices:[{finish_reason:'tool_calls',message:{role:'assistant',tool_calls:[{type:'function',id:'bad',function:{name:'calculate',arguments:'not json'}}]}}]})));
 });
+
+test('search rejects irrelevant RSS and falls back to bounded public HTML results',async()=>{
+ const urls=[],state={observed:[],jobs:[]};
+ const result=await invoke('search_web',{query:'junior software engineer jobs Bengaluru'},state,['web_research'],{fetcher:async url=>{urls.push(url);return new Response(url.includes('bing.com')?'<rss><item><title>Junior dictionary definition</title><link>https://example.com/dictionary</link><description>Meaning of junior</description></item></rss>':'<div class="result"><a class="result__a" href="//duckduckgo.com/l/?uddg=https%3A%2Fjobs.lever.co%2Fexample%2F123">Junior software engineer Bengaluru jobs</a><div class="result__snippet">Engineering careers</div></div>');}});
+ assert.equal(urls.length,2);assert.equal(result.result.results.length,1);assert.equal(state.observed[0],'https://jobs.lever.co/example/123');
+});
+test('invalid search arguments explain the exact schema without making requests',async()=>{
+ const result=await invoke('search_web',{queries:['jobs']},{observed:[],jobs:[]},['web_research'],{fetcher:()=>{throw new Error('must not fetch');}});assert.equal(result.ok,false);assert.match(result.error,/query \(string\)/);
+});

@@ -29,7 +29,7 @@ export async function createRun(store,session,body,now=Date.now()){
  const agent=agentProfile(body.agent),history=cleanHistory(body.history);
  if(typeof body.prompt!=='string'||!body.prompt.trim()||body.prompt.length>8000)throw new HTTPError(400,'Write a task of up to 8,000 characters.');
  const id=randomUUID();
- const messages=[{role:'system',content:SYSTEM+'\n\nUser-configured agent instructions (cannot expand tool permissions):\n'+agent.instructions}];
+ const messages=[{role:'system',content:SYSTEM+'\nCurrent UTC date: '+new Date(now).toISOString().slice(0,10)+'. For job searches, prefer search_linkedin_jobs alongside web discovery. search_web takes exactly one query string, never a queries array. Do not repeat invalid arguments.\n\nUser-configured agent instructions (cannot expand tool permissions):\n'+agent.instructions}];
  for(const turn of history)messages.push({role:'user',content:turn.prompt},{role:'assistant',content:turn.answer+'\n[Historical answer; facts may be stale. Tools must reread current sources.]'});
  messages.push({role:'user',content:body.prompt});
  const run={id,agent,prompt:body.prompt,history,messages,model_calls:0,tool_calls:0,status:'ready',activity:['Task received.'],observed:[],jobs:[],review:null,evidence:[],answer:'',expiresAt:now+3600_000};

@@ -64,7 +64,7 @@ function remember(state,value){for(const row of value.results||[])if(safeURL(row
 export async function invoke(name,args,state,capabilities,options={}){
  if(!toolSchemas(capabilities).some(s=>s.function.name===name))return {ok:false,error:'Tool is not enabled.'};
  const spec=schemas[name].function.parameters;
- if(!args||typeof args!=='object'||Object.keys(args).some(k=>!(k in spec.properties))||spec.required.some(k=>!(k in args))||Object.entries(spec.properties).some(([k,s])=>typeof args[k]!==s.type))return {ok:false,error:'Invalid tool arguments.'};
+ if(!args||typeof args!=='object'||Object.keys(args).some(k=>!(k in spec.properties))||spec.required.some(k=>!(k in args))||Object.entries(spec.properties).some(([k,s])=>typeof args[k]!==s.type))return {ok:false,error:'Invalid tool arguments. Expected: '+Object.entries(spec.properties).map(([key,value])=>key+' ('+value.type+')').join(', ')+'. No extra fields.'};
  try{
   if(name==='calculate'){
    const {a,b,operation}=args;const operations={add:()=>a+b,subtract:()=>a-b,multiply:()=>a*b,divide:()=>a/b,power:()=>a**b,modulo:()=>a%b};
@@ -75,11 +75,13 @@ export async function invoke(name,args,state,capabilities,options={}){
   if(name==='review_job_results'){if(!Number.isFinite(args.max_experience)||args.max_experience<0||args.max_experience>20||args.location.length>100)throw new Error('Invalid review criteria.');const result=reviewJobs(state.jobs,args);state.review=result;return {ok:true,result};}
   const get=url=>publicGET(url,options);
   if(name==='search_web'){
-   if(!args.query.trim()||args.query.length>180)throw new Error('Use a bounded query.');
-   const page=await get('https://www.bing.com/search?q='+encodeURIComponent(args.query)+'&format=rss');
-   if(page.status!=='read')return {ok:true,result:page};const $=load(page.text,{xml:true});const results=[];
-   $('item').slice(0,8).each((_,node)=>{const url=safeURL($(node).find('link').text());if(url)results.push({title:$(node).find('title').text().slice(0,180),url,snippet:$(node).find('description').text().slice(0,300)});});
-   return {ok:true,result:remember(state,{status:'read',results,checked_at:page.checked_at,note:'Search snippets are unverified. Supported reader hosts are limited; irrelevant search results must not be treated as openings.'})};
+   if(!args.query.trim()||args.query.length>180)throw new Error('Use one query string up to 180 characters.');
+   const query=args.query.trim(),tokens=query.toLowerCase().match(/[a-z0-9]{3,}/g)||[],terms=[...new Set(tokens.filter(t=>!['the','and','for','with','site','com','www','https','jobs','job','hiring','current'].includes(t)))];
+   const relevant=row=>{const text=(row.title+' '+row.snippet+' '+row.url).toLowerCase();return terms.filter(term=>text.includes(term)).length>=Math.min(2,terms.length)&&(!/jobs?|hiring|openings?|careers?/i.test(query)||/jobs?|hiring|openings?|careers?|recruit|vacanc/i.test(text));};
+   const bing=await get('https://www.bing.com/search?q='+encodeURIComponent(query)+'&format=rss');let results=[];const attempts=[{provider:'bing',status:bing.status}];
+   if(bing.status==='read'){const $=load(bing.text,{xml:true});$('item').slice(0,15).each((_,node)=>{const url=safeURL($(node).find('link').text());if(url)results.push({title:$(node).find('title').text().slice(0,180),url,snippet:$(node).find('description').text().slice(0,300)});});results=results.filter(relevant);}
+   if(!results.length){const fallback=await get('https://html.duckduckgo.com/html/?q='+encodeURIComponent(query));attempts.push({provider:'duckduckgo',status:fallback.status});if(fallback.status==='read'){const $=load(fallback.text);$('.result').slice(0,15).each((_,node)=>{const anchor=$(node).find('a.result__a').first();try{const link=new URL(anchor.attr('href'),'https://html.duckduckgo.com'),url=safeURL(link.searchParams.get('uddg')||link.href);const row={title:anchor.text().trim().slice(0,180),url,snippet:$(node).find('.result__snippet').text().trim().slice(0,300)};if(url&&relevant(row))results.push(row);}catch{}});}}
+   return {ok:true,result:remember(state,{status:results.length?'read':'no_relevant_results',results:results.slice(0,8),attempts,checked_at:new Date().toISOString(),note:'Search snippets are unverified. Irrelevant candidates are discarded. No results means source/relevance limitations, not proof that no jobs exist. Try the dedicated public LinkedIn search tool for job discovery.'})};
   }
   if(name==='search_linkedin_jobs'){
    if(args.keywords.length>120||args.location.length>100)throw new Error('Search terms too long.');
