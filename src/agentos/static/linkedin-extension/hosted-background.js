@@ -1,7 +1,7 @@
 const hostedOrigin='https://agentos-workspace-raj.netlify.app';
 let hostedWorking=false;
 const hostedReads=new Map();
-async function hostedState(){const {hostedConnection:c}=await chrome.storage.session.get('hostedConnection');if(!c||c.expiresAt<Date.now())return {connected:false};try{const tab=await chrome.tabs.get(c.tabId),workspace=await chrome.tabs.get(c.workspaceTabId);return {connected:isLinkedInTab(tab)&&new URL(workspace.url).origin===hostedOrigin,workspaceTabId:c.workspaceTabId};}catch{return {connected:false};}}
+async function hostedState(){const {hostedConnection:c}=await chrome.storage.session.get('hostedConnection');if(!c||c.expiresAt<Date.now())return {connected:false};try{const tab=await chrome.tabs.get(c.tabId),workspace=await chrome.tabs.get(c.workspaceTabId);return {connected:isLinkedInTab(tab)&&workspace.id===c.workspaceTabId&&(!workspace.url||new URL(workspace.url).origin===hostedOrigin),workspaceTabId:c.workspaceTabId};}catch{return {connected:false};}}
 async function connectHosted(){
  if(working||hostedWorking)throw new Error('Wait for the current tab read to finish.');
  const [tab]=await chrome.tabs.query({active:true,currentWindow:true});
