@@ -296,3 +296,8 @@ Isolated workspace runs retain collected task-tool evidence if a later provider 
 
 
 Connected posting reads can return explicitly labeled partial fields if the description misses its loading deadline. An observed title/application URL does not establish missing experience requirements or an open matching role; the full evidence review still applies.
+
+
+## Hosted demo
+
+A separate Netlify adapter provides a server-managed Gemini demo with Google sign-in, per-user agents and bounded public research. See [HOSTED_RELEASE.md](HOSTED_RELEASE.md) for setup, production deployment and local-only feature differences. Google client configuration and real sign-in UAT are required before public release.

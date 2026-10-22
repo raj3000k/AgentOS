@@ -112,7 +112,8 @@ def make_server(port=8765, *, request_token=None, storage_path=None, isolate_run
                     for name in ('manifest.json', 'background.js', 'popup.html', 'popup.js', 'companion.js', 'sidepanel.html', 'sidepanel.css', 'sidepanel.js', 'output.js'):
                         bundle.writestr('agentos-browser-companion/' + name, files('agentos').joinpath('static', 'linkedin-extension', name).read_bytes())
                 return self.send(200, archive.getvalue(), 'application/zip')
-            assets = {"/": ("index.html", "text/html; charset=utf-8"),
+            assets = {"/assets/brand-mark.svg": ("assets/brand-mark.svg", "image/svg+xml"),
+                      "/assets/agent-orbit.png": ("assets/agent-orbit.png", "image/png"),"/": ("index.html", "text/html; charset=utf-8"),
                       "/app.js": ("app.js", "text/javascript; charset=utf-8"),
                       "/output.js": ("output.js", "text/javascript; charset=utf-8"),
                       "/style.css": ("style.css", "text/css; charset=utf-8")}

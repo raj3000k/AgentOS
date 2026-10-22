@@ -1,0 +1,17 @@
+{
+  "name": "agentos-hosted-demo",
+  "private": true,
+  "scripts": {
+    "build": "node scripts/build-hosted.mjs",
+    "test:hosted": "node --test tests/hosted/*.test.mjs",
+    "test:extension": "node --test tests/browser_companion.test.cjs"
+  },
+  "dependencies": {
+    "@netlify/blobs": "11.1.6",
+    "cheerio": "1.2.0",
+    "jose": "6.1.3"
+  },
+  "engines": {
+    "node": ">=22"
+  }
+}

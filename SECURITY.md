@@ -135,3 +135,8 @@ LinkedIn compatibility reads on the modern generic layout remain field-scoped: t
 
 
 At a connected posting-read deadline, the extension may return its last scoped job fields with an incomplete-description label. This does not broaden page access or fill missing requirements. Navigation-away/login/challenge failures do not become successful partial reads. Observed application links remain unverified until checked.
+
+
+## Hosted adapter
+
+The Node/Netlify adapter has a separate Google identity and per-user storage boundary; it never exposes the Python loopback server. Read [HOSTED_RELEASE.md](HOSTED_RELEASE.md) for JWT/nonce/session/CSRF checks, immutable usage claims, retention, registered source hosts, cloud limitations and outstanding production checks. Browser tabs, cookies and local credentials are not forwarded to hosted runs. Shared-key public access remains a small capped demo, not hardened multi-tenant production hosting.

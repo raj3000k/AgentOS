@@ -43,3 +43,6 @@
 @media(max-width:600px){.job-review-card{padding:16px}.job-review-card .card-heading{flex-direction:column;gap:8px}}
 
 .linkedin-connection{margin:20px 0;padding:18px;border:1px solid var(--line,#d8ddd4);border-radius:16px}.linkedin-connection h3{margin:0}.linkedin-connection ol{padding-left:22px}.linkedin-connection li{margin:10px 0}.linkedin-connection #linkedin-status{font-size:12px;min-width:110px}.linkedin-connection input{max-width:100%}
+
+/* Shared AgentOS identity */
+.brand-mark{flex-shrink:0;border-radius:11px}.hero{position:relative;isolation:isolate;overflow:hidden;min-height:240px;padding-right:35%}.orbit-art{position:absolute;right:-3%;top:0;width:46%;height:100%;object-fit:cover;z-index:-1;border-radius:24px;mask-image:linear-gradient(to right,transparent,#000 30%)}@media(max-width:800px){.hero{padding-right:0}.orbit-art{opacity:.18;width:75%}}
