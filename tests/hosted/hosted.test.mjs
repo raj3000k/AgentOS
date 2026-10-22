@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {settings,nonce,googleLogin,authenticate,sign,cookieName} from '../../netlify/lib/auth.mjs';
-import {createRun,runStep,getRun,stopRun} from '../../netlify/lib/engine.mjs';
+import {createRun,runStep,getRun,stopRun,reviewedAnswer} from '../../netlify/lib/engine.mjs';
 import {reserveRequest} from '../../netlify/lib/limits.mjs';
 import {publicGET,invoke,reviewJobs} from '../../netlify/lib/tools.mjs';
 import {createHandler} from '../../netlify/functions/api.mjs';
@@ -102,4 +102,9 @@ test('reviewed final output cannot replace unknown experience with model asserti
  record.data.review=reviewJobs([{title:'Software Engineer',location:'Bengaluru',description:'Experience unspecified',source_url:'https://www.linkedin.com/jobs/view/123456/',application_url:null}]);await store.setJSON(`users/${session.uid}/runs/${run.id}`,record.data);
  const result=await runStep(store,session,cfg,run.id,{model:async()=>({role:'assistant',content:'Confirmed match with 1 year of experience. Apply now.'})});
  assert.match(result.answer,/Unknown or ambiguous/);assert.match(result.answer,/destination: not established/);assert.ok(!result.answer.includes('Confirmed match with 1 year'));
+});
+
+
+test('review output preserves a stated zero-year minimum',()=>{
+ const review=reviewJobs([{title:'Junior Software Engineer',location:'Bengaluru',description:'0–2 years experience',source_url:'https://www.linkedin.com/jobs/view/123456/'}]);assert.match(reviewedAnswer(review),/0 years minimum stated/);
 });

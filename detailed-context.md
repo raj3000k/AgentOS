@@ -459,3 +459,5 @@ Final prose matched categories/counts but incorrectly said all three uncertain r
 - Impacted netlify/lib/tools.mjs, netlify/lib/engine.mjs, tests/hosted/hosted.test.mjs and this log. Added range-boundary and contradictory-model-output regression fixtures; sixteen hosted tests pass. Direct apply links remain unavailable for these public postings; do not represent LinkedIn source URLs as company application destinations. Full Python checks/deployment follow.
 
 - Validation: sixteen hosted tests and 137 offline Python tests pass (40.131 seconds); frontend build/whitespace checks pass. Prior eight extension checks passed in the same milestone; extension source is unchanged.
+
+- Final rendering review also preserves numeric zero in a stated zero-year experience minimum; covered by a seventeenth hosted regression fixture.
