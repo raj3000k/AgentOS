@@ -86,6 +86,7 @@ function isLinkedInTab(tab) {
 }
 function checkLinkedInOrigin() { return location.origin==='https://www.linkedin.com'; }
 async function connectCurrentLinkedIn() {
+  if(working)throw new Error('Wait for the current tab read to finish.');
   if(companionState.running)throw new Error('Stop the active run before changing its connected tab.');
   const [tab]=await chrome.tabs.query({active:true,currentWindow:true});
   if(!isLinkedInTab(tab))throw new Error('Open LinkedIn, click the AgentOS toolbar icon there, then connect this tab.');
@@ -209,6 +210,7 @@ async function stopCompanion() {
   if (companionRun.started) await companionRequest('/api/run/stop',{run_id:companionRun.id});
 }
 chrome.runtime.onMessage.addListener((message,sender,respond)=>{
+  if(message?.type?.startsWith('hosted-'))return;
   if (sender.id!==chrome.runtime.id || sender.url!==chrome.runtime.getURL('sidepanel.html')) return;
   (async()=>{
     await companionReady;

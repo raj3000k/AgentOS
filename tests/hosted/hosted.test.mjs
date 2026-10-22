@@ -108,3 +108,32 @@ test('reviewed final output cannot replace unknown experience with model asserti
 test('review output preserves a stated zero-year minimum',()=>{
  const review=reviewJobs([{title:'Junior Software Engineer',location:'Bengaluru',description:'0–2 years experience',source_url:'https://www.linkedin.com/jobs/view/123456/'}]);assert.match(reviewedAnswer(review),/0 years minimum stated/);
 });
+
+test('hosted browser step pauses without replaying model or performing a server LinkedIn read',async()=>{
+ const {browserReply}=await import('../../netlify/lib/engine.mjs');
+ const store=new Store(),agent={...profile,capabilities:['web_research']},run=await createRun(store,session,{agent,prompt:'Find junior jobs',useBrowser:true});let models=0;
+ const waiting=await runStep(store,session,cfg,run.id,{model:async()=>{models++;return {role:'assistant',content:'',tool_calls:[{id:'search',type:'function',function:{name:'search_linkedin_jobs',arguments:'{"keywords":"junior engineer","location":"Bengaluru"}'}}]};},tool:()=>{throw new Error('No server browser read');}});
+ assert.equal(waiting.status,'waiting_browser');assert.equal(waiting.pendingBrowser.commands.length,1);assert.ok(waiting.pendingBrowser.commands[0].readId);
+ assert.equal((await runStep(store,session,cfg,run.id)).status,'waiting_browser');assert.equal(models,1);
+ await assert.rejects(browserReply(store,{uid:'b'.repeat(64)},run.id,{}),e=>e.status===404);
+ await assert.rejects(browserReply(store,session,run.id,{batchId:'wrong',results:[]}),e=>e.status===400);
+ const command=waiting.pendingBrowser.commands[0],body={batchId:waiting.pendingBrowser.batchId,results:[{id:command.id,result:{status:'read',url:command.url,links:[{url:'https://www.linkedin.com/jobs/view/123456/',text:'Junior Engineer'},{url:'http://127.0.0.1/private',text:'private'}]}}]};
+ const ready=await browserReply(store,session,run.id,body);assert.equal(ready.status,'ready');assert.equal(ready.tool_calls,1);assert.equal(ready.evidence[0].result.result.jobs.length,1);
+ assert.equal((await browserReply(store,session,run.id,body)).tool_calls,1);
+});
+test('browser reply cannot revive a stopped run',async()=>{
+ const {browserReply}=await import('../../netlify/lib/engine.mjs');const store=new Store(),run=await createRun(store,session,{agent:{...profile,capabilities:['web_research']},prompt:'jobs',useBrowser:true});
+ await runStep(store,session,cfg,run.id,{model:async()=>({role:'assistant',content:'',tool_calls:[{id:'s',function:{name:'search_linkedin_jobs',arguments:'{"keywords":"engineer","location":"Bengaluru"}'}}]})});await stopRun(store,session,run.id);assert.equal((await browserReply(store,session,run.id,{})).status,'cancelled');
+});
+test('browser normalization rejects mismatched surfaces and preserves unknown verification',async()=>{
+ const {browserResult,browserCommand}=await import('../../netlify/lib/browser.mjs');const state={observed:[],jobs:[]},url='https://www.linkedin.com/jobs/view/123456/';
+ assert.equal(browserCommand({id:'x',function:{name:'inspect_linkedin_job',arguments:JSON.stringify({url})}},state),null);
+ assert.equal(browserResult({url},{status:'read',url:'https://evil.example/',description:'secret'},state).result.status,'browser_unavailable');
+ const result=browserResult({url},{status:'read',url,title:'Junior Engineer',location:'Bengaluru',description:'0–2 years experience',application_url:'http://127.0.0.1/private'},state);assert.equal(result.result.application_url,null);assert.equal(result.result.feed_verified,false);assert.equal(state.jobs.length,1);
+});
+
+test('a review batched with browser inspection waits for the captured posting',async()=>{
+ const {browserReply}=await import('../../netlify/lib/engine.mjs'),store=new Store(),url='https://www.linkedin.com/jobs/view/123456/',agent={...profile,capabilities:['web_research']};const run=await createRun(store,session,{agent,prompt:'inspect',useBrowser:true}),record=await getRun(store,session.uid,run.id);record.data.observed=[url];await store.setJSON(`users/${session.uid}/runs/${run.id}`,record.data);
+ const waiting=await runStep(store,session,cfg,run.id,{model:async()=>({role:'assistant',content:'',tool_calls:[{id:'inspect',function:{name:'inspect_linkedin_job',arguments:JSON.stringify({url})}},{id:'review',function:{name:'review_job_results',arguments:'{"location":"Bengaluru","max_experience":2}'}}]})});
+ assert.equal(waiting.status,'waiting_browser');const ready=await browserReply(store,session,run.id,{batchId:waiting.pendingBrowser.batchId,results:[{id:'inspect',result:{status:'read',url,title:'Junior Software Engineer',company:'Example',location:'Bengaluru',description:'0–2 years experience',application_url:'https://jobs.lever.co/example/123'}}]});assert.equal(ready.review.counts.uncertain,1);assert.equal(ready.evidence.length,2);assert.equal(ready.review.jobs[0].application_url,'https://jobs.lever.co/example/123');
+});

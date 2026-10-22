@@ -11,6 +11,7 @@ global.chrome={
  action:{onClicked:{addListener:()=>{}}},sidePanel:{open:async()=>{}}
 };
 global.crypto=require('node:crypto').webcrypto;
+global.working=false;
 global.fetch=async(url,options={})=>{
  calls.push({url,options});
  if(url.endsWith('/'))return {ok:true,text:async()=>`<meta name="agentos-token" content="${token}">`};
@@ -164,3 +165,5 @@ test('one-click LinkedIn pairing validates current tab permission and keeps cred
   paired=false;assert.equal((await message('companion-state')).linkedinTab.connected,false);
  }finally{global.fetch=oldFetch;chrome.scripting.executeScript=oldExecute;chrome.tabs.get=oldGet;delete store.connection;}
 });
+
+test('local companion listener leaves hosted messages to the hosted handler',async()=>{const state=await message('hosted-status');assert.equal(state.connected,false);assert.equal(state.error,undefined);});

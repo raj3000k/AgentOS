@@ -140,3 +140,10 @@ $('chat-form').addEventListener('submit',async event=>{
   if(stored.companionSettings){const saved=stored.companionSettings;settings={...settings,...saved,api_key:''};$('provider').value=settings.provider;$('model').value=settings.model;$('endpoint').value=settings.base_url;$('web-research').checked=!!saved.web;$('plan-task').checked=!!saved.plan;$('linkedin-research').checked=!!saved.linkedin;$('model-button').textContent='◈ '+settings.model;}
   updateProvider();await refresh();setInterval(refresh,1000);
 })();
+
+async function refreshHosted(){try{const value=await message('hosted-status');$('hosted-status').textContent=value.connected?'Connected. Run your agent in the linked AgentOS website tab.':'Not connected. Open LinkedIn, click the extension icon, then connect.';$('hosted-disconnect').hidden=!value.connected;}catch(error){$('hosted-status').textContent=error.message;}}
+$('hosted-connect').addEventListener('click',async()=>{$('hosted-connect').disabled=true;try{await message('hosted-connect');await refreshHosted();}catch(error){$('hosted-status').textContent=error.message;}finally{$('hosted-connect').disabled=false;}});
+$('hosted-disconnect').addEventListener('click',async()=>{await message('hosted-disconnect');await refreshHosted();});
+refreshHosted();setInterval(refreshHosted,4000);
+
+$('toggle-local').addEventListener('click',()=>{const open=$('local-workspace').hidden;$('local-workspace').hidden=!open;$('local-composer').hidden=!open;$('open-settings').hidden=!open;$('new-chat').hidden=!open;$('toggle-local').setAttribute('aria-expanded',String(open));$('toggle-local').textContent=open?'Hide local companion':'Use local companion instead';});

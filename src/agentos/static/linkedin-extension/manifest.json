@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
   "name": "AgentOS \u00b7 Browser Companion",
-  "version": "0.3.0",
-  "description": "Chat with your local AgentOS agent beside pages you explicitly choose.",
+  "version": "0.4.0",
+  "description": "Connect one LinkedIn tab to your hosted AgentOS workspace, or use the local companion.",
   "permissions": [
     "activeTab",
     "scripting",
@@ -22,5 +22,17 @@
   "minimum_chrome_version": "116",
   "side_panel": {
     "default_path": "sidepanel.html"
-  }
+  },
+  "content_scripts": [
+    {
+      "matches": [
+        "https://agentos-workspace-raj.netlify.app/*"
+      ],
+      "js": [
+        "hosted-content.js"
+      ],
+      "all_frames": false,
+      "run_at": "document_idle"
+    }
+  ]
 }

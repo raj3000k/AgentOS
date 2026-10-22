@@ -2,7 +2,7 @@ import {getStore} from '@netlify/blobs';
 import {settings,HTTPError,cookieName,cookie,nonce,googleLogin,authenticate} from '../lib/auth.mjs';
 import {catalog} from '../lib/tools.mjs';
 import {dayKey,countClaims} from '../lib/limits.mjs';
-import {agentProfile,createRun,getRun,publicRun,runStep,stopRun,generateBrief} from '../lib/engine.mjs';
+import {agentProfile,createRun,getRun,publicRun,runStep,stopRun,generateBrief,browserReply} from '../lib/engine.mjs';
 import {randomUUID} from 'node:crypto';
 const headers={'Content-Type':'application/json','Cache-Control':'no-store','X-Content-Type-Options':'nosniff'};
 const send=(data,status=200,extra={})=>new Response(JSON.stringify(data),{status,headers:{...headers,...extra}});
@@ -30,8 +30,8 @@ export function createHandler({storeFactory=()=>getStore({name:'agentos-demo',co
    const input=await body(request),profile=agentProfile(input.agent),id=randomUUID(),prefix=`users/${session.uid}/agents/`,{blobs}=await store.list({prefix});if(blobs.length>=30)throw new HTTPError(400,'This demo supports up to 30 saved agents per user.');const item={id,...profile,createdAt:new Date().toISOString()};await store.setJSON(prefix+id,item);return send({item});
   }
   if(path==='/api/runs'&&request.method==='POST')return send(await createRun(store,session,await body(request)));
-  const match=path.match(/^\/api\/runs\/([\da-f-]+)(?:\/(step|stop))?$/);
-  if(match){if(request.method==='GET'&&!match[2])return send(publicRun((await getRun(store,session.uid,match[1])).data));if(request.method==='POST'&&match[2]==='step')return send(await runStep(store,session,cfg,match[1]));if(request.method==='POST'&&match[2]==='stop')return send(await stopRun(store,session,match[1]));}
+  const match=path.match(/^\/api\/runs\/([\da-f-]+)(?:\/(step|stop|browser))?$/);
+  if(match){if(request.method==='POST'&&match[2]==='browser')return send(await browserReply(store,session,match[1],await body(request)));if(request.method==='GET'&&!match[2])return send(publicRun((await getRun(store,session.uid,match[1])).data));if(request.method==='POST'&&match[2]==='step')return send(await runStep(store,session,cfg,match[1]));if(request.method==='POST'&&match[2]==='stop')return send(await stopRun(store,session,match[1]));}
   return send({error:'Not found.'},404);
  }catch(error){if(error instanceof HTTPError)return send({error:error.message,retryAfter:error.retryAfter},error.status,error.retryAfter?{'Retry-After':String(error.retryAfter)}:{});return send({error:'The workspace could not complete this request. Please try again.'},500);}
 };}

@@ -53,7 +53,7 @@ class BrowserCompanionTests(unittest.TestCase):
             with urllib.request.urlopen(f'http://127.0.0.1:{server.server_port}/browser-extension.zip') as response:
                 with zipfile.ZipFile(io.BytesIO(response.read())) as bundle:
                     names=set(bundle.namelist())
-                    self.assertEqual(len(names),9)
+                    self.assertEqual(len(names),11)
                     self.assertIn('agentos-browser-companion/sidepanel.html',names)
                     self.assertIn('agentos-browser-companion/companion.js',names)
                     manifest=json.loads(bundle.read('agentos-browser-companion/manifest.json'))

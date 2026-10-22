@@ -73,8 +73,9 @@ async function readWhenReady(tabId, command) {
   const requested = new URL(command.url);
   let partial;
   while (Date.now()/1000 < command.expires_at - 2) {
-    const {connection} = await chrome.storage.session.get('connection');
-    if (!connection || connection.tabId !== tabId) return {status:'session_disconnected'};
+    const stored = await chrome.storage.session.get(command.hosted?'hostedConnection':'connection');
+    const connection=command.hosted?stored.hostedConnection:stored.connection;
+    if (!connection || command.hosted&&connection.expiresAt<Date.now() || connection.tabId !== tabId) return {status:'session_disconnected'};
     const tab = await chrome.tabs.get(tabId);
     if (tab.status === 'loading' || tab.pendingUrl) { await new Promise(resolve=>setTimeout(resolve,700)); continue; }
     const current = new URL(tab.url || 'about:blank');
@@ -134,5 +135,6 @@ chrome.tabs.onRemoved.addListener(async id=>{
 });
 
 importScripts('companion.js');
+importScripts('hosted-background.js');
 
 if(typeof module!=='undefined' && module.exports)module.exports={readJobPage,readWhenReady};

@@ -109,7 +109,7 @@ def make_server(port=8765, *, request_token=None, storage_path=None, isolate_run
             if self.path in ('/linkedin-extension.zip', '/browser-extension.zip'):
                 archive = io.BytesIO()
                 with zipfile.ZipFile(archive, 'w', zipfile.ZIP_DEFLATED) as bundle:
-                    for name in ('manifest.json', 'background.js', 'popup.html', 'popup.js', 'companion.js', 'sidepanel.html', 'sidepanel.css', 'sidepanel.js', 'output.js'):
+                    for name in ('manifest.json', 'background.js', 'popup.html', 'popup.js', 'companion.js', 'sidepanel.html', 'sidepanel.css', 'sidepanel.js', 'output.js', 'hosted-content.js', 'hosted-background.js'):
                         bundle.writestr('agentos-browser-companion/' + name, files('agentos').joinpath('static', 'linkedin-extension', name).read_bytes())
                 return self.send(200, archive.getvalue(), 'application/zip')
             assets = {"/assets/brand-mark.svg": ("assets/brand-mark.svg", "image/svg+xml"),

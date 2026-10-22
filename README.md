@@ -301,3 +301,6 @@ Connected posting reads can return explicitly labeled partial fields if the desc
 ## Hosted demo
 
 A separate Netlify adapter provides a server-managed Gemini demo with Google sign-in, per-user agents and bounded public research. See [HOSTED_RELEASE.md](HOSTED_RELEASE.md) for setup, production deployment and local-only feature differences. Google client configuration and real sign-in UAT are required before public release.
+
+
+Hosted LinkedIn companion 0.4.0 now links one explicitly selected tab to one hosted workspace tab without a local server. Setup, exact-origin/frame/tab scope, run consent and remaining live verification are in [HOSTED_RELEASE.md](HOSTED_RELEASE.md). No Google session, Gemini key or cookies are sent to the extension.
