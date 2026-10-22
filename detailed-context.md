@@ -472,3 +472,5 @@ Final prose matched categories/counts but incorrectly said all three uncertain r
 - Impacted hosted/index.html/app.mjs/app.css, static/index.html/style.css and this log. Existing checks and deployment evidence follow.
 
 - Verification: 137 Python tests pass (40.140 seconds), seventeen hosted tests pass, frontend build/JS syntax/whitespace checks pass. Both HTML files have unique IDs and exactly six non-submit prompt buttons. No additional tests were introduced for this reversible presentation change. Production browser check follows deployment.
+
+- Published runtime 04352c1 from prod as Netlify 6ada7539313d3ec51d8acdda. Live Chrome verified the adjacent six-option panel; choosing Find my next role filled/focused the editable description, showed its selected state and guidance, and left usage unchanged at 23/24 (no generation). Screenshot: ignored outputs/release-uat/prompt-starters.png. Local servers were not restarted. Desktop visual/interaction QA passed; narrow-screen stacking is implemented in CSS but not live device-tested.
