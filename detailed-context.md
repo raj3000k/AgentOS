@@ -461,3 +461,5 @@ Final prose matched categories/counts but incorrectly said all three uncertain r
 - Validation: sixteen hosted tests and 137 offline Python tests pass (40.131 seconds); frontend build/whitespace checks pass. Prior eight extension checks passed in the same milestone; extension source is unchanged.
 
 - Final rendering review also preserves numeric zero in a stated zero-year experience minimum; covered by a seventeenth hosted regression fixture.
+
+- Final runtime snapshot fafe49d is pushed to main/prod and deployed from prod as Netlify 6ada7147abd3d0e04eb4be03. Production health returns 200/ok; checkout returned to main, clean. Latest final-answer integrity changes are verified by fixtures; the live four-posting UAT preceded those formatting fixes. No claim of a subsequent live exact-apply acceptance pass. Seventeen hosted regression tests pass; most recent full Python suite 137 pass. Cloud-to-local authenticated companion integration and two-account UAT remain open.
