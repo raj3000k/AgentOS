@@ -463,3 +463,12 @@ Final prose matched categories/counts but incorrectly said all three uncertain r
 - Final rendering review also preserves numeric zero in a stated zero-year experience minimum; covered by a seventeenth hosted regression fixture.
 
 - Final runtime snapshot fafe49d is pushed to main/prod and deployed from prod as Netlify 6ada7147abd3d0e04eb4be03. Production health returns 200/ok; checkout returned to main, clean. Latest final-answer integrity changes are verified by fixtures; the live four-posting UAT preceded those formatting fixes. No claim of a subsequent live exact-apply acceptance pass. Seventeen hosted regression tests pass; most recent full Python suite 137 pass. Cloud-to-local authenticated companion integration and two-account UAT remain open.
+
+
+### 2026-10-23 — One-click agent prompt starters
+
+- User requested prewritten prompts beside agent creation to avoid repeatedly composing a description. Added a visible adjacent prompt panel to hosted and local studios: job research, interview practice, study planning, topic research, writing edits and code review. Selecting a prompt fills the editable description and focuses it; it never submits, uses quota or silently creates/runs an agent. Hosted selection announces the next action and has a visible selected state. Existing ready-made draft templates remain separate.
+- Responsive layout stacks the panel beneath the composer on narrow screens, with readable two-column options where space permits. Shared starters stay within supported capability boundaries and explicitly avoid invented facts, applications and code execution. Reused the local description handler; no backend/provider/trust changes. Local servers remain stopped.
+- Impacted hosted/index.html/app.mjs/app.css, static/index.html/style.css and this log. Existing checks and deployment evidence follow.
+
+- Verification: 137 Python tests pass (40.140 seconds), seventeen hosted tests pass, frontend build/JS syntax/whitespace checks pass. Both HTML files have unique IDs and exactly six non-submit prompt buttons. No additional tests were introduced for this reversible presentation change. Production browser check follows deployment.
