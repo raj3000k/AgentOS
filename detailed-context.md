@@ -450,3 +450,12 @@ Final prose matched categories/counts but incorrectly said all three uncertain r
 - Fixed stale prior-agent progress/error display when switching to a new draft. Impacted netlify/lib/tools.mjs, netlify/lib/engine.mjs, hosted/app.mjs, tests/hosted/hosted.test.mjs and this log. Added fixtures for irrelevant RSS/fallback/observed URLs and actionable invalid arguments; fourteen hosted tests pass. Full Python verification and live rerun follow.
 
 - Validation: 137 offline Python tests pass (40.138 seconds), fourteen hosted tests and eight extension tests pass; frontend build and whitespace checks pass. Live first-run evidence remains a failed job-discovery acceptance test, not a validated list of openings.
+
+
+### 2026-10-23 — Hosted reviewed-answer integrity
+
+- Deployed ded22de (Netlify 6ada70563909ef8bca2fc82e) and repeated the same job prompt. Real run completed with four model calls/eight tools: public LinkedIn search, two web searches, four posting reads, deterministic review, final answer. Review: zero confirmed, four uncertain, no excluded/closed/blocked; no exact company application destination captured. This establishes real hosted public posting discovery/read/review, not the requested direct-apply acceptance outcome. Ignored trace work/research-rerun-4.json and screenshot outputs/release-uat/job-research.png preserve evidence.
+- Trace audit found visible prose claimed Amazon one-year experience although deterministic review said unknown, and adjacent HTML tags joined words/numbers so 0–2 ranges were parsed from the trailing 2. Reworked scoped text extraction to preserve text-node boundaries, and render completed reviewed-job answers from actual review records instead of model prose. Counts, category, experience quotes, source and missing application destination now use server-owned captured evidence; ordinary writing answers still use model prose. Unknown evidence remains unknown. No additional inference is needed for formatting.
+- Impacted netlify/lib/tools.mjs, netlify/lib/engine.mjs, tests/hosted/hosted.test.mjs and this log. Added range-boundary and contradictory-model-output regression fixtures; sixteen hosted tests pass. Direct apply links remain unavailable for these public postings; do not represent LinkedIn source URLs as company application destinations. Full Python checks/deployment follow.
+
+- Validation: sixteen hosted tests and 137 offline Python tests pass (40.131 seconds); frontend build/whitespace checks pass. Prior eight extension checks passed in the same milestone; extension source is unchanged.

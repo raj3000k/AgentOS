@@ -17,6 +17,13 @@ export function cleanHistory(history=[]){
  if(JSON.stringify(result).length>48000)throw new HTTPError(400,'Conversation context is full. Start a new conversation.');return result;
 }
 export function publicRun(run){return {id:run.id,status:run.status,model_calls:run.model_calls,tool_calls:run.tool_calls,activity:run.activity.slice(-15),answer:run.answer||'',review:run.review||null,evidence:run.evidence.slice(-24),error:run.error||'',expiresAt:run.expiresAt};}
+export function reviewedAnswer(review){
+ const clean=value=>String(value||'Unknown').replace(/[\\`*_[\]<>|]/g,' ').replace(/\s+/g,' ').trim();
+ const lines=['## Reviewed openings',`Confirmed matches: **${review.counts.confirmed_match}** · Uncertain: **${review.counts.uncertain}** · Excluded: **${review.counts.excluded}** · Closed: **${review.counts.closed}**`,'Classification and experience below come from the captured review. Uncertain candidates are not verified matching openings.'];
+ for(const job of review.jobs){lines.push(`\n### ${clean(job.company)} — ${clean(job.title)}`,`**${clean(job.quality_category)}** · ${clean(job.location)}`,`Experience: ${job.experience?.status==='stated'?clean(job.experience.minimum)+' years minimum stated':'Unknown or ambiguous; not verified'}.`);for(const item of job.experience?.evidence||[])lines.push('Evidence: '+clean(item.quote));lines.push(job.reasons.map(clean).join('; '));if(job.source_url)lines.push(`[Source posting](${job.source_url})`);if(job.application_url&&!['excluded','closed','blocked'].includes(job.quality_category))lines.push(`[Observed apply destination](${job.application_url}) — acceptance/current availability is not guaranteed.`);else lines.push('Exact company application destination: not established.');}
+ if(!review.jobs.length)lines.push('No postings were captured and verified. This does not establish that no suitable openings exist.');
+ return lines.join('\n\n').slice(0,16000);
+}
 export function partialAnswer(run,reason){
  const lines=[`**Partial result:** ${reason}`,'Only collected tool evidence is retained. Missing facts and application links are not inferred.'];
  if(run.review){lines.push('\nReview counts: '+Object.entries(run.review.counts).map(([k,v])=>`${k}: ${v}`).join(' · '));for(const job of run.review.jobs||[]){lines.push(`\n**${job.company||'Unknown employer'} — ${job.title||'Unknown role'}** · ${job.quality_category}\n${job.reasons.join('; ')}\nSource: ${job.source_url}`);if(job.application_url&&!['excluded','closed','blocked'].includes(job.quality_category))lines.push('Observed destination (check verification): '+job.application_url);}}
@@ -50,7 +57,7 @@ export async function runStep(store,session,cfg,id,{model=chat,tool=invoke,now=D
  try{
   const answer=await model(cfg,messages,final?[]:toolSchemas(run.agent.capabilities));
   const calls=answer.tool_calls||[];
-  if(!calls.length){if(!answer.content.trim())throw new HTTPError(502,'The model returned an empty answer.');run.messages.push(answer);run.answer=answer.content.slice(0,16000);run.status=final?'budget_summary':'completed';run.activity.push('Response ready.');}
+  if(!calls.length){if(!answer.content.trim())throw new HTTPError(502,'The model returned an empty answer.');run.messages.push(answer);run.answer=run.review?reviewedAnswer(run.review):answer.content.slice(0,16000);run.status=final?'budget_summary':'completed';run.activity.push('Response ready.');}
   else{
    if(final||calls.length>4||run.tool_calls+calls.length>24)throw new HTTPError(502,'Tool batch exceeded the configured limit. No calls in that batch ran.');
    run.messages.push(answer);run.activity.push('Model requested '+calls.map(call=>call.function.name).join(', '));

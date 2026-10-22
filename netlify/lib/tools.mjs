@@ -59,7 +59,7 @@ const schemas={
  review_job_results:schema('review_job_results','Review actual current-run captured postings. Always use before a final job-search answer.',{location:str('Requested city'),max_experience:{type:'number',minimum:0,maximum:20}})
 };
 export function toolSchemas(capabilities){const names=[];if(capabilities.includes('calculator'))names.push('calculate');if(capabilities.includes('structured_extraction'))names.push('extract_links');if(capabilities.includes('web_research'))names.push('search_web','read_web_page','search_linkedin_jobs','inspect_linkedin_job');if(capabilities.includes('job_boards'))names.push('search_company_jobs');if(capabilities.some(c=>['web_research','job_boards'].includes(c)))names.push('review_job_results');return names.map(n=>schemas[n]);}
-function cleanText($,selector){return $(selector).first().text().replace(/\s+/g,' ').trim();}
+function cleanText($,selector){const root=$(selector).first();return root.find('*').addBack().contents().filter((_,node)=>node.type==='text').map((_,node)=>$(node).text()).get().join(' ').replace(/\s+/g,' ').trim();}
 function remember(state,value){for(const row of value.results||[])if(safeURL(row.url))state.observed.push(row.url);for(const row of value.jobs||[])if(safeURL(row.source_url))state.observed.push(row.source_url);state.observed=[...new Set(state.observed)].slice(-100);return value;}
 export async function invoke(name,args,state,capabilities,options={}){
  if(!toolSchemas(capabilities).some(s=>s.function.name===name))return {ok:false,error:'Tool is not enabled.'};

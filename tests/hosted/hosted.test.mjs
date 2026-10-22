@@ -91,3 +91,15 @@ test('search rejects irrelevant RSS and falls back to bounded public HTML result
 test('invalid search arguments explain the exact schema without making requests',async()=>{
  const result=await invoke('search_web',{queries:['jobs']},{observed:[],jobs:[]},['web_research'],{fetcher:()=>{throw new Error('must not fetch');}});assert.equal(result.ok,false);assert.match(result.error,/query \(string\)/);
 });
+
+test('LinkedIn text boundaries preserve zero-based ranges and experience requirements',async()=>{
+ const url='https://www.linkedin.com/jobs/view/123456/';const state={observed:[url],jobs:[]};
+ const result=await invoke('inspect_linkedin_job',{url},state,['web_research'],{fetcher:async()=>new Response('<h1>Junior Engineer</h1><span class="topcard__flavor--bullet">Bengaluru</span><div class="show-more-less-html__markup"><p>Must Have</p><p>0–2 years of professional experience</p></div>')});
+ assert.equal(result.result.experience.minimum,0);assert.equal(result.result.experience.status,'stated');
+});
+test('reviewed final output cannot replace unknown experience with model assertions',async()=>{
+ const store=new Store(),run=await createRun(store,session,{agent:profile,prompt:'Review jobs'}),record=await getRun(store,session.uid,run.id);
+ record.data.review=reviewJobs([{title:'Software Engineer',location:'Bengaluru',description:'Experience unspecified',source_url:'https://www.linkedin.com/jobs/view/123456/',application_url:null}]);await store.setJSON(`users/${session.uid}/runs/${run.id}`,record.data);
+ const result=await runStep(store,session,cfg,run.id,{model:async()=>({role:'assistant',content:'Confirmed match with 1 year of experience. Apply now.'})});
+ assert.match(result.answer,/Unknown or ambiguous/);assert.match(result.answer,/destination: not established/);assert.ok(!result.answer.includes('Confirmed match with 1 year'));
+});
