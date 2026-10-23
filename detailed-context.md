@@ -500,3 +500,15 @@ Final prose matched categories/counts but incorrectly said all three uncertain r
 - Impacted extension hosted-background.js/manifest.json, hosted/index.html/app.mjs, tests/hosted/extension-bridge.test.mjs and this log. Tests, packaging and rollout follow.
 
 - Verification: 137 offline Python tests pass (40.133 seconds), twenty-six hosted/relay tests and nine extension tests pass; frontend build, syntax and whitespace checks pass. Added a realistic fixture with workspace URL omitted while retaining foreign-origin denial. Diagnostic and model reads cannot run concurrently in the website; transport also rejects concurrent reads. Updated installed manifest/hosted-background.js to 0.4.1; reload/reconnect is pending. Chrome internal extensions-page inspection was policy-blocked; no alternate surface was used to bypass that restriction. Normal website/panel inspection remains available.
+
+
+### 2026-10-23 — Companion toolbar startup hardening (0.4.2)
+
+- User reported a Chrome warning with manifest 0.4.1 and no effect on toolbar click; exact error text was unavailable. Downloaded production ZIP: all eleven files match current source, manifest parses and scripts load together in a shared worker context. This does not reproduce Chrome's warning, so no exact warning root cause is claimed.
+- Found that toolbar open() rejections were silently discarded. Configure the default enabled side panel and Chrome's native openPanelOnActionClick behavior on worker startup/install/browser startup, following the official Side Panel API. Keep manual open only as an API fallback and report actionable configuration/open errors. Optional OffscreenCanvas icon rendering is guarded so a cosmetic failure cannot abort worker startup. Version 0.4.2 and visible panel version marker; no permission/host-access changes.
+- Impacted extension background.js/companion.js/manifest.json/sidepanel.html, hosted/index.html download label, hosted startup regression tests, HOSTED_RELEASE.md and this log. Shared-worker tests cover actual importScripts initialization/native toolbar configuration, icon failure and configuration error handling; packaging/build/offline/live status follow.
+- Reference: https://developer.chrome.com/docs/extensions/reference/api/sidePanel (native toolbar setPanelBehavior and user-gesture open requirements).
+
+- Startup guards cover both synchronous API exceptions and promise rejections while retaining all three message handlers. This is hardening for the reported click failure, not a reproduced diagnosis of the unspecified manifest warning.
+
+- Verification: 137 offline Python tests pass (40.213 seconds), twenty-nine hosted/relay/startup tests and nine extension tests pass, JS syntax/build/whitespace checks pass. Built 0.4.2 ZIP has eleven files and all declared worker/panel/content-script resources. Updated the previously used unpacked Downloads installation as well; user may be loading a different extracted website download, so version confirmation/fresh package matters. Real Chrome click and warning resolution remain pending; no local servers restarted.

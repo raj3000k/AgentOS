@@ -247,14 +247,15 @@ chrome.runtime.onMessage.addListener((message,sender,respond)=>{
   })().then(result=>respond(result)).catch(error=>respond({error:error.message || 'Action unavailable'}));
   return true;
 });
-chrome.action.onClicked.addListener(tab=>{
-  // The explicit toolbar gesture grants activeTab for this page; adding its text is a separate user action.
-  chrome.sidePanel.open({windowId:tab.windowId}).catch(()=>{});
+// Modern Chrome opens the panel natively; the fallback keeps older compatible API surfaces usable.
+if(!chrome.sidePanel?.setPanelBehavior)chrome.action.onClicked.addListener(tab=>{
+  try{chrome.sidePanel.open({windowId:tab.windowId}).catch(error=>console.error('AgentOS could not open its side panel:',error.message));}
+  catch(error){console.error('AgentOS side panel is unavailable:',error.message);}
 });
 
-if(typeof OffscreenCanvas!=='undefined'){
+if(typeof OffscreenCanvas!=='undefined')try{
   const canvas=new OffscreenCanvas(32,32), context=canvas.getContext('2d');
   context.fillStyle='#e5ebdf';context.beginPath();context.roundRect(0,0,32,32,8);context.fill();
   context.font='27px Georgia';context.fillStyle='#344f41';context.fillText('a',3,24);context.fillStyle='#799079';context.fillText('o',14,24);
   chrome.action.setIcon({imageData:context.getImageData(0,0,32,32)}).catch(()=>{});
-}
+}catch{ /* Optional icon rendering must never prevent the companion from starting. */ }

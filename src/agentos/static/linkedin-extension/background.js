@@ -1,3 +1,14 @@
+function configureSidePanel(){
+  if(!chrome.sidePanel?.setPanelBehavior)return;
+  try{
+  const options=chrome.sidePanel.setOptions?chrome.sidePanel.setOptions({path:'sidepanel.html',enabled:true}):Promise.resolve();
+  Promise.resolve(options).then(()=>chrome.sidePanel.setPanelBehavior({openPanelOnActionClick:true}))
+    .catch(error=>console.error('AgentOS could not enable its side panel:',error.message));
+  }catch(error){console.error('AgentOS could not enable its side panel:',error.message);}
+}
+configureSidePanel();
+chrome.runtime.onInstalled?.addListener(configureSidePanel);
+chrome.runtime.onStartup?.addListener(configureSidePanel);
 const base = 'http://127.0.0.1:8765/api/linkedin/';
 let working = false;
 const allowed = url => {

@@ -57,3 +57,6 @@ Each browser read is bounded to roughly 25 seconds, at most four in a batch, wit
 
 
 Companion 0.4.1 tolerates Chrome withholding the workspace tab URL in tabs.get; actual requests still validate sender origin/frame/tab/account. The Run workspace includes **Test LinkedIn access**, a quota-free fixed job-search read. Its count is visible candidates only, not verified openings. Reload 0.4.1 and reconnect after updating; no new permissions are required.
+
+
+Companion 0.4.2 configures Chrome's native toolbar-to-side-panel behavior and makes cosmetic icon drawing nonfatal. It adds no permissions. If Chrome still shows a warning, copy the exact error sentence: a displayed manifest by itself does not identify the failure. Native side-panel setup follows https://developer.chrome.com/docs/extensions/reference/api/sidePanel.

@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "AgentOS \u00b7 Browser Companion",
-  "version": "0.4.1",
+  "version": "0.4.2",
   "description": "Connect one LinkedIn tab to your hosted AgentOS workspace, or use the local companion.",
   "permissions": [
     "activeTab",
