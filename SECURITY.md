@@ -143,3 +143,6 @@ The Node/Netlify adapter has a separate Google identity and per-user storage bou
 
 
 Hosted LinkedIn companion 0.4.2 now links one explicitly selected tab to one hosted workspace tab without a local server. Setup, exact-origin/frame/tab scope, run consent and remaining live verification are in [HOSTED_RELEASE.md](HOSTED_RELEASE.md). No Google session, Gemini key or cookies are sent to the extension.
+
+
+Category workflows are trusted static data with allowlisted category/workflow/capability IDs. User task material cannot add tools or execute code. Hosted CSV/JSON inspection is bounded, deterministic, data-only and offline; spreadsheet formulas and prototype-like JSON keys are never evaluated. Workflow preparation makes no model request. Runs retain the existing session/CSRF/user-isolation controls and require explicit user initiation.

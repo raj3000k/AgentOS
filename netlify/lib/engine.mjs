@@ -1,3 +1,4 @@
+import {categoryIds,workflowIds} from './workflows.mjs';
 import {browserCommand,completeBrowser} from './browser.mjs';
 import {randomUUID} from 'node:crypto';
 import {HTTPError} from './auth.mjs';
@@ -9,7 +10,8 @@ const UUID=/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}
 export function agentProfile(value){
  if(!value||typeof value!=='object'||typeof value.name!=='string'||!value.name.trim()||value.name.length>80||typeof value.instructions!=='string'||!value.instructions.trim()||value.instructions.length>8000||typeof value.purpose!=='string'||value.purpose.length>400)throw new HTTPError(400,'Review the agent name, purpose and instructions.');
  let capabilities;try{capabilities=validateCapabilities(value.capabilities);}catch{throw new HTTPError(400,'Choose supported hosted capabilities.');}
- return {name:value.name.trim(),purpose:value.purpose,instructions:value.instructions,capabilities};
+ const category=value.category??'general',workflowId=value.workflowId??'';if(!categoryIds.has(category)||typeof workflowId!=='string'||workflowId&&!workflowIds.has(workflowId))throw new HTTPError(400,'Choose a supported category or workflow.');
+ return {name:value.name.trim(),purpose:value.purpose,instructions:value.instructions,capabilities,category,workflowId};
 }
 export function cleanHistory(history=[]){
  if(!Array.isArray(history)||history.length>8)throw new HTTPError(400,'Start a new conversation after eight turns.');
@@ -88,7 +90,7 @@ export async function stopRun(store,session,id){const record=await getRun(store,
 export async function generateBrief(store,session,cfg,description,model=chat){
  if(typeof description!=='string'||!description.trim()||description.length>4000)throw new HTTPError(400,'Describe an agent in up to 4,000 characters.');
  await reserveRequest(store,session,cfg);
- const answer=await model(cfg,[{role:'system',content:'Create a focused agent brief. Return only a JSON object with name (under 80 characters), purpose (under 400 characters), instructions (under 5000 characters) and capabilities (array of IDs from this catalog): '+JSON.stringify(catalog)+'. Choose only relevant supported capabilities. No local files, local models, arbitrary code, external submissions or messages exist. Authenticated LinkedIn job reads require an explicitly connected companion and per-run consent; otherwise only public sources work. No tool execution now. Keep instructions useful, honest, and evidence-based.'},{role:'user',content:description}],[]);
+ const answer=await model(cfg,[{role:'system',content:'Create a focused agent brief. Return only a JSON object with name (under 80 characters), purpose (under 400 characters), instructions (under 5000 characters) and category (one of general,research,career,content,engineering,data,planning) and capabilities (array of IDs from this catalog): '+JSON.stringify(catalog)+'. Choose only relevant supported capabilities. No local files, local models, arbitrary code, external submissions or messages exist. Authenticated LinkedIn job reads require an explicitly connected companion and per-run consent; otherwise only public sources work. No tool execution now. Keep instructions useful, honest, and evidence-based.'},{role:'user',content:description}],[]);
  let parsed;try{parsed=JSON.parse(answer.content.replace(/^```(?:json)?\s*/,'').replace(/\s*```$/,''));}catch{throw new HTTPError(502,'The model returned an unreadable draft. Try a clearer description.');}
  return agentProfile(parsed);
 }

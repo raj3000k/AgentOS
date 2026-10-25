@@ -1,8 +1,9 @@
+import {analyzeCSV,inspectJSON} from './data-tools.mjs';
 import {load} from 'cheerio';
 const HOSTS=new Set(['www.bing.com','html.duckduckgo.com','www.linkedin.com','in.linkedin.com','boards-api.greenhouse.io','job-boards.greenhouse.io','boards.greenhouse.io','api.lever.co','jobs.lever.co','careers.google.com','www.google.com','careers.cisco.com','careers.kula.ai','www.amazon.jobs','amazon.jobs']);
-export const catalog=[{id:'web_research',label:'Public web research',description:'Search public pages and inspect supported job sources.'},{id:'job_boards',label:'Company job boards',description:'Read published Greenhouse and Lever openings.'},{id:'calculator',label:'Calculator',description:'Validated arithmetic through a trusted function.'},{id:'structured_extraction',label:'Extract links',description:'Extract HTTPS links from text you provide.'},{id:'writing',label:'Writing & summaries',description:'Draft and summarize supplied material.'},{id:'code_review',label:'Code review',description:'Review supplied code, without executing it.'}];
+export const catalog=[{id:'web_research',label:'Public web research',description:'Search public pages and inspect supported job sources.'},{id:'job_boards',label:'Company job boards',description:'Read published Greenhouse and Lever openings.'},{id:'calculator',label:'Calculator',description:'Validated arithmetic through a trusted function.'},{id:'structured_extraction',label:'Text & JSON inspection',description:'Extract HTTPS links or validate supplied JSON.'},{id:'data_analysis',label:'CSV analysis',description:'Measure rows, missing values and numeric summaries from supplied CSV.'},{id:'writing',label:'Writing & summaries',description:'Draft and summarize supplied material.'},{id:'code_review',label:'Code review',description:'Review supplied code, without executing it.'}];
 export const capabilityIds=new Set(catalog.map(row=>row.id));
-export function validateCapabilities(ids){if(!Array.isArray(ids)||ids.length>6||ids.some(id=>!capabilityIds.has(id)))throw new Error('Choose supported hosted capabilities.');return [...new Set(ids)];}
+export function validateCapabilities(ids){if(!Array.isArray(ids)||ids.length>catalog.length||ids.some(id=>!capabilityIds.has(id)))throw new Error('Choose supported hosted capabilities.');return [...new Set(ids)];}
 export function safeURL(value){try{const url=new URL(value);return url.protocol==='https:'&&!url.username&&!url.password&&!url.port&&url.href.length<=1800?url.href:null;}catch{return null;}}
 export function allowedURL(value){const safe=safeURL(value);if(!safe)return false;const u=new URL(safe);return HOSTS.has(u.hostname)&&(!u.hostname.endsWith('linkedin.com')||/^\/jobs\/(?:view\/(?:[\w-]+-)?\d+\/?|search\/?)$/.test(u.pathname));}
 export async function publicGET(value,{fetcher=fetch,timeout=7000}={}){
@@ -49,6 +50,8 @@ export function reviewJobs(observations,{location='Bengaluru',max_experience=2}=
 const schema=(name,description,properties,required=Object.keys(properties))=>({type:'function',function:{name,description,parameters:{type:'object',properties,required,additionalProperties:false}}});
 const str=description=>({type:'string',description});
 const schemas={
+ analyze_csv:schema('analyze_csv','Measure supplied CSV: up to 12000 characters, 200 rows and 30 columns. No formula evaluation.',{csv_text:str('CSV text including a unique header row')}),
+ inspect_json:schema('inspect_json','Validate and describe supplied JSON without executing it.',{text:str('JSON text up to 12000 characters')}),
  calculate:schema('calculate','Perform validated arithmetic.',{a:{type:'number'},b:{type:'number'},operation:{type:'string',enum:['add','subtract','multiply','divide','power','modulo']}}),
  extract_links:schema('extract_links','Extract HTTPS links from supplied text.',{text:str('Text up to 12000 characters')}),
  search_web:schema('search_web','Search public web sources. Results are candidates; never assume job validity.',{query:str('Specific search query up to 180 characters')}),
@@ -58,7 +61,7 @@ const schemas={
  search_company_jobs:schema('search_company_jobs','Read published employer Greenhouse/Lever feed. Board ID must come from an observed source; do not invent IDs.',{provider:{type:'string',enum:['greenhouse','lever']},board:str('Observed employer board identifier'),query:str('Role keywords'),location:str('City')}),
  review_job_results:schema('review_job_results','Review actual current-run captured postings. Always use before a final job-search answer.',{location:str('Requested city'),max_experience:{type:'number',minimum:0,maximum:20}})
 };
-export function toolSchemas(capabilities){const names=[];if(capabilities.includes('calculator'))names.push('calculate');if(capabilities.includes('structured_extraction'))names.push('extract_links');if(capabilities.includes('web_research'))names.push('search_web','read_web_page','search_linkedin_jobs','inspect_linkedin_job');if(capabilities.includes('job_boards'))names.push('search_company_jobs');if(capabilities.some(c=>['web_research','job_boards'].includes(c)))names.push('review_job_results');return names.map(n=>schemas[n]);}
+export function toolSchemas(capabilities){const names=[];if(capabilities.includes('calculator'))names.push('calculate');if(capabilities.includes('structured_extraction'))names.push('extract_links','inspect_json');if(capabilities.includes('data_analysis'))names.push('analyze_csv');if(capabilities.includes('web_research'))names.push('search_web','read_web_page','search_linkedin_jobs','inspect_linkedin_job');if(capabilities.includes('job_boards'))names.push('search_company_jobs');if(capabilities.some(c=>['web_research','job_boards'].includes(c)))names.push('review_job_results');return names.map(n=>schemas[n]);}
 function cleanText($,selector){const root=$(selector).first();return root.find('*').addBack().contents().filter((_,node)=>node.type==='text').map((_,node)=>$(node).text()).get().join(' ').replace(/\s+/g,' ').trim();}
 function remember(state,value){for(const row of value.results||[])if(safeURL(row.url))state.observed.push(row.url);for(const row of value.jobs||[])if(safeURL(row.source_url))state.observed.push(row.source_url);state.observed=[...new Set(state.observed)].slice(-100);return value;}
 export async function invoke(name,args,state,capabilities,options={}){
@@ -66,6 +69,8 @@ export async function invoke(name,args,state,capabilities,options={}){
  const spec=schemas[name].function.parameters;
  if(!args||typeof args!=='object'||Object.keys(args).some(k=>!(k in spec.properties))||spec.required.some(k=>!(k in args))||Object.entries(spec.properties).some(([k,s])=>typeof args[k]!==s.type))return {ok:false,error:'Invalid tool arguments. Expected: '+Object.entries(spec.properties).map(([key,value])=>key+' ('+value.type+')').join(', ')+'. No extra fields.'};
  try{
+  if(name==='analyze_csv')return {ok:true,result:analyzeCSV(args.csv_text)};
+  if(name==='inspect_json')return {ok:true,result:inspectJSON(args.text)};
   if(name==='calculate'){
    const {a,b,operation}=args;const operations={add:()=>a+b,subtract:()=>a-b,multiply:()=>a*b,divide:()=>a/b,power:()=>a**b,modulo:()=>a%b};
    if(!Number.isFinite(a)||!Number.isFinite(b)||Math.abs(a)>1e12||Math.abs(b)>1e12||!operations[operation])throw new Error('Unsupported arithmetic.');

@@ -1,8 +1,14 @@
 # AgentOS
 
-A lightweight local-first Python agent framework with a browser workspace, Ollama, and optional user-key API providers. Start with `qwen3:8b`, register trusted Python functions, and inspect a bounded tool-calling loop.
+Create task-specific agents, choose trusted capabilities, and run repeatable on-demand workflows across Research, Career, Content, Engineering, Data and Planning. The hosted workspace includes twelve editable workflows; the local-first Python framework remains small and dependency-free, with Ollama and optional user-key API providers.
 
-**Status:** early single-agent MVP. No core runtime dependencies, telemetry, or automatic conversation storage. API providers require your own key and explicit selection. SDK custom tools run in-process and are not sandboxed. Production workspace agent runs use separate supervised workers with total deadlines; workers keep the same OS permissions.
+**Status:** early single-agent MVP. The separate hosted demo uses Google sign-in and a server-managed Gemini key; the Python setup below is local-first. No core runtime dependencies, telemetry, or automatic conversation storage. Local API providers require your own key and explicit selection. SDK custom tools run in-process and are not sandboxed. Production workspace agent runs use separate supervised workers with total deadlines; workers keep the same OS permissions.
+
+## Hosted agent workspace
+
+Open https://agentos-workspace-raj.netlify.app, sign in, choose a category and workflow, and supply a task brief. **Prepare task** creates an editable agent/task without inference; **Run agent** starts the bounded tool loop. You can also describe a custom agent, edit its category/capabilities and save it to your account. CSV quality audits use measured statistics; JSON checks parse data without executing it.
+
+Workflows run on demand. This release does not schedule background jobs, send messages or submit forms. The browser companion is optional and marked experimental. See [HOSTED_RELEASE.md](HOSTED_RELEASE.md) for deployment, trust boundaries and feature differences.
 
 ## Quick start
 

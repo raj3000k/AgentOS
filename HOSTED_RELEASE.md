@@ -36,7 +36,7 @@ Each step makes at most one model request and four fixed tool calls. Maximum six
 
 ## Supported / local-only
 
-Hosted: writing, supplied-code review without execution, arithmetic, supplied-text links, public web/LinkedIn pages where accessible, Greenhouse/Lever feeds, explicitly connected LinkedIn job tab via companion 0.4.0, editable drafts, saved profiles, follow-ups, readable output/evidence.
+Hosted: six work categories and twelve editable on-demand workflows, writing, supplied-code review without execution, arithmetic, supplied-text links, CSV quality/numeric summaries and JSON validation, public web/LinkedIn pages where accessible, Greenhouse/Lever feeds, explicitly connected LinkedIn job tab via companion 0.4.0, editable drafts, saved profiles, follow-ups, readable output/evidence.
 
 Local-only: user-chosen providers/keys/Ollama, local companion chat/source tray, filesystem/data tools, browser renderer, SQLite run archives, Python execution isolation and richer planning/completion checks. The scoped hosted relay requires explicit extension connection and the bound workspace tab; merely opening LinkedIn grants no access.
 
@@ -60,3 +60,12 @@ Companion 0.4.1 tolerates Chrome withholding the workspace tab URL in tabs.get; 
 
 
 Companion 0.4.2 configures Chrome's native toolbar-to-side-panel behavior and makes cosmetic icon drawing nonfatal. It adds no permissions. If Chrome still shows a warning, copy the exact error sentence: a displayed manifest by itself does not identify the failure. Native side-panel setup follows https://developer.chrome.com/docs/extensions/reference/api/sidePanel.
+
+
+## Category-based creation and task workflows (2026-10-26)
+
+The public homepage explains the platform and six categories: Research, Career, Content, Engineering, Data and Planning. A shared static catalog (`netlify/lib/workflows.mjs`, copied to the frontend at build time) supplies twelve ready-to-edit workflow agents. These are fixed trusted templates, not model-generated programs. Selection/preparation uses no model requests. Supply up to 6,000 characters, prepare the task, review it and explicitly start the existing bounded run engine. Category/workflow IDs are allowlisted and saved with agent profiles; older profiles default to General. The model can recommend one allowed category for custom agents, and users can edit it with category buttons.
+
+Data adds registered `analyze_csv` and `inspect_json` functions in `netlify/lib/data-tools.mjs`. CSV inputs are bounded to 12,000 characters, 200 data rows and 30 columns, with unique nonempty headers and consistent row widths. Quoted commas/newlines/escaped quotes are parsed as data; formulas are never evaluated. Numeric summaries accept finite numeric cells within ±1e12, report missing values and do not infer causation. JSON parsing returns validity/type/keys/array length and executes no content. Neither tool reads files or accesses a network.
+
+Automation in this milestone means repeatable user-started tasks with selected tools and reviewable outputs. No cron scheduling, background jobs, external writes, message sending, application submission or multi-agent orchestration is added. Prepared briefs remain in page memory; existing one-hour hosted run retention and unfinished persistent-history work are unchanged. The local Python UI/CLI keeps its existing capability catalog; the new category workflow hub is hosted-specific. The companion is explicitly optional/experimental and is unnecessary for these workflows.
