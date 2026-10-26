@@ -1,3 +1,4 @@
+import {listDocuments,addDocument,removeDocument,retrieveKnowledge} from '../lib/knowledge.mjs';
 import {getStore} from '@netlify/blobs';
 import {settings,HTTPError,cookieName,cookie,nonce,googleLogin,authenticate} from '../lib/auth.mjs';
 import {catalog} from '../lib/tools.mjs';
@@ -22,6 +23,10 @@ export function createHandler({storeFactory=()=>getStore({name:'agentos-demo',co
   const session=await authenticate(request,cfg,store);
   if(path==='/api/session'&&request.method==='GET')return send({user:{name:session.name,email:session.email},csrf:session.csrf,model:cfg.model,quota:{used:await countClaims(store,`limits/user/${session.uid}/${dayKey()}/`),limit:cfg.userLimit},capabilities:catalog});
   if(path==='/api/logout'&&request.method==='POST'){await store.delete('sessions/'+session.jti);return send({ok:true},200,{'Set-Cookie':cookie(cookieName(cfg),'',cfg,0)});}
+  if(path==='/api/knowledge'&&request.method==='GET')return send({items:await listDocuments(store,session.uid)});
+  if(path==='/api/knowledge'&&request.method==='POST')return send({item:await addDocument(store,session.uid,await body(request))});
+  if(path==='/api/knowledge/remove'&&request.method==='POST'){await removeDocument(store,session.uid,(await body(request)).id);return send({ok:true});}
+  if(path==='/api/knowledge/preview'&&request.method==='POST'){const input=await body(request);return send(await retrieveKnowledge(store,session.uid,input.ids,input.query));}
   if(path==='/api/context'&&request.method==='POST')return send({agent:await generateBrief(store,session,cfg,(await body(request)).description)});
   if(path==='/api/agents'&&request.method==='GET'){
    const prefix=`users/${session.uid}/agents/`,{blobs}=await store.list({prefix});const items=await Promise.all(blobs.slice(0,30).map(row=>store.get(row.key,{type:'json'})));return send({items:items.filter(Boolean)});

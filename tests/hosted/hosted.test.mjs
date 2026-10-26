@@ -144,3 +144,17 @@ test('saved workflow category persists through authenticated API without leaking
  const saved=await handler(new Request(cfg.origin+'/api/agents',{method:'POST',headers:{cookie,origin:cfg.origin,'content-type':'application/json','x-agentos-csrf':user.csrf},body:JSON.stringify({agent:prepareWorkflow('csv-audit','n\n1').agent})}));assert.equal(saved.status,200);const list=await handler(new Request(cfg.origin+'/api/agents',{headers:{cookie}}));const data=await list.json();assert.equal(data.items[0].category,'data');assert.equal(data.items[0].workflowId,'csv-audit');
  const other={...user,uid:'b'.repeat(64),jti:'other-session'};await store.setJSON('sessions/'+other.jti,{uid:other.uid,expiresAt:Date.now()+60000});const otherCookie=`${cookieName(cfg)}=${await sign(other,cfg)}`;const empty=await handler(new Request(cfg.origin+'/api/agents',{headers:{cookie:otherCookie}}));assert.deepEqual((await empty.json()).items,[]);
 });
+
+test('knowledge API requires auth and CSRF, scopes preview and removal by account',async()=>{
+ const store=new Store(),environment={AGENTOS_SITE_URL:cfg.origin,AGENTOS_SESSION_SECRET:cfg.secret,GOOGLE_CLIENT_ID:cfg.clientId,GEMINI_API_KEY:cfg.key},handler=createHandler({storeFactory:()=>store,environment});
+ const user={kind:'session',uid:'a'.repeat(64),jti:'knowledge-test',csrf:'csrf-test',name:'Test',email:'test@example.com'};await store.setJSON('sessions/'+user.jti,{uid:user.uid,expiresAt:Date.now()+60000});const cookie=`${cookieName(cfg)}=${await sign(user,cfg)}`;
+ const post=(path,data,headers={})=>handler(new Request(cfg.origin+'/api/'+path,{method:'POST',headers:{cookie,origin:cfg.origin,'content-type':'application/json','x-agentos-csrf':user.csrf,...headers},body:JSON.stringify(data)}));
+ assert.equal((await handler(new Request(cfg.origin+'/api/knowledge'))).status,401);
+ assert.equal((await post('knowledge',{title:'Notes',text:'Annual allowance is 18 days.'},{'x-agentos-csrf':'wrong'})).status,403);
+ const saved=await post('knowledge',{title:'Notes',text:'Annual allowance is 18 days.'});assert.equal(saved.status,200);const {item}=await saved.json();assert.ok(!('text' in item));
+ const preview=await post('knowledge/preview',{ids:[item.id],query:'annual allowance'});assert.match((await preview.json()).sources[0].text,/18 days/);
+ const foreign={...user,uid:'b'.repeat(64),jti:'knowledge-other'};await store.setJSON('sessions/'+foreign.jti,{uid:foreign.uid,expiresAt:Date.now()+60000});const foreignCookie=`${cookieName(cfg)}=${await sign(foreign,cfg)}`;
+ assert.equal((await post('knowledge/preview',{ids:[item.id],query:'annual'},{cookie:foreignCookie})).status,404);
+ assert.equal((await post('knowledge/remove',{id:item.id},{cookie:foreignCookie})).status,404);
+ assert.equal((await post('knowledge/remove',{id:item.id})).status,200);
+});

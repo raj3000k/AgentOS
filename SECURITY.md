@@ -146,3 +146,10 @@ Hosted LinkedIn companion 0.4.2 now links one explicitly selected tab to one hos
 
 
 Category workflows are trusted static data with allowlisted category/workflow/capability IDs. User task material cannot add tools or execute code. Hosted CSV/JSON inspection is bounded, deterministic, data-only and offline; spreadsheet formulas and prototype-like JSON keys are never evaluated. Workflow preparation makes no model request. Runs retain the existing session/CSRF/user-isolation controls and require explicit user initiation.
+
+
+### Hosted knowledge workspace
+
+Add titled text/Markdown references in **Knowledge**, then choose up to four in **Run workspace**. Use **Preview relevant passages** to inspect retrieval without model calls. **Answer only from selected sources** disables external tools and excludes earlier answers; if no keyword matches are found, the run abstains without calling Gemini. **Ask your documents** prepares a reference-focused agent. Normal runs without selected documents remain available.
+
+References are private to the authenticated account, stored on AgentOS hosting until removed (12 documents, 30,000 characters each). Adding text stores it; a run sends only its retrieved excerpts to Gemini. Existing runs retain their excerpt snapshots until their one-hour expiry even after the original is removed. No automatic private file access or external document sync exists. Import accepts text/Markdown only; no PDF/OCR. Retrieval uses overlapping chunks and keyword ranking, not embeddings or semantic understanding; paraphrased questions may miss relevant passages. Source labels and exact excerpts are inspectable, and unknown/missing citation labels are flagged, but citation checks do not prove factual support. Source selections are per task, not attached to saved agents. Reference content is untrusted data and cannot grant tools or execute instructions. The local Python runtime is unchanged.

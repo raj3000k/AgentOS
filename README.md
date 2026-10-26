@@ -310,3 +310,10 @@ A separate Netlify adapter provides a server-managed Gemini demo with Google sig
 
 
 Hosted LinkedIn companion 0.4.2 now links one explicitly selected tab to one hosted workspace tab without a local server. Setup, exact-origin/frame/tab scope, run consent and remaining live verification are in [HOSTED_RELEASE.md](HOSTED_RELEASE.md). No Google session, Gemini key or cookies are sent to the extension.
+
+
+### Hosted knowledge workspace
+
+Add titled text/Markdown references in **Knowledge**, then choose up to four in **Run workspace**. Use **Preview relevant passages** to inspect retrieval without model calls. **Answer only from selected sources** disables external tools and excludes earlier answers; if no keyword matches are found, the run abstains without calling Gemini. **Ask your documents** prepares a reference-focused agent. Normal runs without selected documents remain available.
+
+References are private to the authenticated account, stored on AgentOS hosting until removed (12 documents, 30,000 characters each). Adding text stores it; a run sends only its retrieved excerpts to Gemini. Existing runs retain their excerpt snapshots until their one-hour expiry even after the original is removed. No automatic private file access or external document sync exists. Import accepts text/Markdown only; no PDF/OCR. Retrieval uses overlapping chunks and keyword ranking, not embeddings or semantic understanding; paraphrased questions may miss relevant passages. Source labels and exact excerpts are inspectable, and unknown/missing citation labels are flagged, but citation checks do not prove factual support. Source selections are per task, not attached to saved agents. Reference content is untrusted data and cannot grant tools or execute instructions. The local Python runtime is unchanged.
