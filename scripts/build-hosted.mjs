@@ -6,6 +6,10 @@ await cp('hosted','hosted-dist',{recursive:true});
 await cp('netlify/lib/workflows.mjs','hosted-dist/workflows.mjs');
 await cp('src/agentos/static/assets','hosted-dist/assets',{recursive:true});
 await cp('src/agentos/static/output.js','hosted-dist/output.js');
+await mkdir('hosted-dist/vendor/pdfjs',{recursive:true});
+for(const name of ['pdf.min.mjs','pdf.worker.min.mjs'])await cp('node_modules/pdfjs-dist/build/'+name,'hosted-dist/vendor/pdfjs/'+name);
+for(const name of ['cmaps','standard_fonts'])await cp('node_modules/pdfjs-dist/'+name,'hosted-dist/vendor/pdfjs/'+name,{recursive:true});
+await cp('node_modules/pdfjs-dist/LICENSE','hosted-dist/vendor/pdfjs/LICENSE');
 console.log('Built hosted frontend. No environment variables or local secrets included.');
 
 execFileSync('python3',['-c',`from pathlib import Path
