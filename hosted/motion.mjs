@@ -23,7 +23,7 @@ export function initMotion(){
  function schedule(){if(!frame&&!reduced.matches)frame=requestAnimationFrame(paint);}
  function preferences(){if(reduced.matches){cancelAnimationFrame(frame);frame=0;pointer=null;document.querySelectorAll('.motion-reveal').forEach(reveal);for(const card of tilts)reset(card);document.querySelectorAll('.hero-art,.login-art').forEach(node=>node.style.removeProperty('--parallax'));}else schedule();if(!fine.matches){pointer=null;for(const card of tilts)reset(card);}}
  register(document);
- new MutationObserver(records=>{for(const record of records)for(const node of record.addedNodes)if(node.nodeType===1)register(node);for(const card of tilts)if(!card.isConnected){reset(card);tilts.delete(card);observer?.unobserve(card);}schedule();}).observe(document.body,{childList:true,subtree:true,attributes:true,attributeFilter:['hidden']});
+ new MutationObserver(records=>{for(const record of records){for(const node of record.addedNodes)if(node.nodeType===1)register(node);for(const root of record.removedNodes)if(root.nodeType===1){if(root.matches('.motion-reveal'))reveal(root);root.querySelectorAll('.motion-reveal').forEach(reveal);}}for(const card of tilts)if(!card.isConnected){reset(card);tilts.delete(card);observer?.unobserve(card);}schedule();}).observe(document.body,{childList:true,subtree:true,attributes:true,attributeFilter:['hidden']});
  document.addEventListener('focusin',event=>{const node=event.target.closest?.('.motion-reveal');if(node)reveal(node);});
  addEventListener('scroll',schedule,{passive:true});addEventListener('resize',schedule,{passive:true});
  reduced.addEventListener('change',preferences);fine.addEventListener('change',preferences);schedule();
