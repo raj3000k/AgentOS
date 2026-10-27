@@ -20,3 +20,12 @@ export async function reserveRequest(store,session,cfg,now=Date.now()){
  await claim(store,userPrefix,cfg.userLimit,now);
  await claim(store,globalPrefix,cfg.globalLimit,now);
 }
+
+export const EMBEDDING_USER_LIMIT=20,EMBEDDING_GLOBAL_LIMIT=100;
+export async function reserveEmbedding(store,session,now=Date.now()){
+ const day=dayKey(now),userPrefix=`limits/embedding-user/${session.uid}/${day}/`,globalPrefix=`limits/embedding-global/${day}/`;
+ if(await countClaims(store,userPrefix)>=EMBEDDING_USER_LIMIT||await countClaims(store,globalPrefix)>=EMBEDDING_GLOBAL_LIMIT)throw new HTTPError(429,'The daily semantic-search allowance is used. Keyword search still works.');
+ const slot=Math.floor(now/6000),retryAfter=Math.max(1,Math.ceil(((slot+1)*6000-now)/1000));
+ if(!(await store.setJSON(`limits/embedding-pace/${slot}`,{at:now},{onlyIfNew:true,metadata:{expiresAt:now+86400_000}})).modified)throw new HTTPError(429,'Semantic search is busy. Try again shortly; keyword search still works.',retryAfter);
+ await claim(store,userPrefix,EMBEDDING_USER_LIMIT,now);await claim(store,globalPrefix,EMBEDDING_GLOBAL_LIMIT,now);
+}

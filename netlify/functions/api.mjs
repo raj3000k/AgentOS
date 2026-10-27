@@ -1,14 +1,14 @@
-import {listDocuments,addDocument,removeDocument,retrieveKnowledge} from '../lib/knowledge.mjs';
+import {listDocuments,addDocument,removeDocument,retrieveKnowledge,indexDocument} from '../lib/knowledge.mjs';
 import {getStore} from '@netlify/blobs';
 import {settings,HTTPError,cookieName,cookie,nonce,googleLogin,authenticate} from '../lib/auth.mjs';
 import {catalog} from '../lib/tools.mjs';
-import {dayKey,countClaims} from '../lib/limits.mjs';
+import {dayKey,countClaims,EMBEDDING_USER_LIMIT} from '../lib/limits.mjs';
 import {agentProfile,createRun,getRun,publicRun,runStep,stopRun,generateBrief,browserReply} from '../lib/engine.mjs';
 import {randomUUID} from 'node:crypto';
 const headers={'Content-Type':'application/json','Cache-Control':'no-store','X-Content-Type-Options':'nosniff'};
 const send=(data,status=200,extra={})=>new Response(JSON.stringify(data),{status,headers:{...headers,...extra}});
 async function body(request){if(Number(request.headers.get('content-length')||0)>100000)throw new HTTPError(413,'Request too large.');if(!(request.headers.get('content-type')||'').startsWith('application/json'))throw new HTTPError(400,'Use a JSON request.');const text=await request.text();if(text.length>100000)throw new HTTPError(413,'Request too large.');try{return JSON.parse(text);}catch{throw new HTTPError(400,'Invalid JSON request.');}}
-export function createHandler({storeFactory=()=>getStore({name:'agentos-demo',consistency:'strong'}),environment=process.env,verifyGoogle}={}){return async request=>{
+export function createHandler({storeFactory=()=>getStore({name:'agentos-demo',consistency:'strong'}),environment=process.env,verifyGoogle,embeddingOptions={}}={}){return async request=>{
  try{
   const cfg=settings(environment),path=new URL(request.url).pathname.replace(/^\/\.netlify\/functions\/api\/?/,'/api/');
   if(path==='/api/health')return send({status:'ok',version:'hosted-mvp-1'});
@@ -21,12 +21,13 @@ export function createHandler({storeFactory=()=>getStore({name:'agentos-demo',co
    response.headers.append('Set-Cookie',cookie(cookieName(cfg),value.token,cfg,8*3600));response.headers.append('Set-Cookie',cookie(cookieName(cfg)+'_nonce','',cfg,0));return response;
   }
   const session=await authenticate(request,cfg,store);
-  if(path==='/api/session'&&request.method==='GET')return send({user:{name:session.name,email:session.email},csrf:session.csrf,model:cfg.model,quota:{used:await countClaims(store,`limits/user/${session.uid}/${dayKey()}/`),limit:cfg.userLimit},capabilities:catalog});
+  if(path==='/api/session'&&request.method==='GET')return send({user:{name:session.name,email:session.email},csrf:session.csrf,model:cfg.model,quota:{used:await countClaims(store,`limits/user/${session.uid}/${dayKey()}/`),limit:cfg.userLimit},embeddingQuota:{used:await countClaims(store,`limits/embedding-user/${session.uid}/${dayKey()}/`),limit:EMBEDDING_USER_LIMIT},capabilities:catalog});
   if(path==='/api/logout'&&request.method==='POST'){await store.delete('sessions/'+session.jti);return send({ok:true},200,{'Set-Cookie':cookie(cookieName(cfg),'',cfg,0)});}
   if(path==='/api/knowledge'&&request.method==='GET')return send({items:await listDocuments(store,session.uid)});
   if(path==='/api/knowledge'&&request.method==='POST')return send({item:await addDocument(store,session.uid,await body(request))});
+  if(path==='/api/knowledge/index'&&request.method==='POST')return send({item:await indexDocument(store,session,cfg,(await body(request)).id,embeddingOptions)});
   if(path==='/api/knowledge/remove'&&request.method==='POST'){await removeDocument(store,session.uid,(await body(request)).id);return send({ok:true});}
-  if(path==='/api/knowledge/preview'&&request.method==='POST'){const input=await body(request);return send(await retrieveKnowledge(store,session.uid,input.ids,input.query));}
+  if(path==='/api/knowledge/preview'&&request.method==='POST'){const input=await body(request);return send(await retrieveKnowledge(store,session.uid,input.ids,input.query,{...embeddingOptions,semantic:input.semantic===true,cfg}));}
   if(path==='/api/context'&&request.method==='POST')return send({agent:await generateBrief(store,session,cfg,(await body(request)).description)});
   if(path==='/api/agents'&&request.method==='GET'){
    const prefix=`users/${session.uid}/agents/`,{blobs}=await store.list({prefix});const items=await Promise.all(blobs.slice(0,30).map(row=>store.get(row.key,{type:'json'})));return send({items:items.filter(Boolean)});
@@ -34,7 +35,7 @@ export function createHandler({storeFactory=()=>getStore({name:'agentos-demo',co
   if(path==='/api/agents'&&request.method==='POST'){
    const input=await body(request),profile=agentProfile(input.agent),id=randomUUID(),prefix=`users/${session.uid}/agents/`,{blobs}=await store.list({prefix});if(blobs.length>=30)throw new HTTPError(400,'This demo supports up to 30 saved agents per user.');const item={id,...profile,createdAt:new Date().toISOString()};await store.setJSON(prefix+id,item);return send({item});
   }
-  if(path==='/api/runs'&&request.method==='POST')return send(await createRun(store,session,await body(request)));
+  if(path==='/api/runs'&&request.method==='POST')return send(await createRun(store,session,await body(request),Date.now(),{...embeddingOptions,cfg}));
   const match=path.match(/^\/api\/runs\/([\da-f-]+)(?:\/(step|stop|browser))?$/);
   if(match){if(request.method==='POST'&&match[2]==='browser')return send(await browserReply(store,session,match[1],await body(request)));if(request.method==='GET'&&!match[2])return send(publicRun((await getRun(store,session.uid,match[1])).data));if(request.method==='POST'&&match[2]==='step')return send(await runStep(store,session,cfg,match[1]));if(request.method==='POST'&&match[2]==='stop')return send(await stopRun(store,session,match[1]));}
   return send({error:'Not found.'},404);

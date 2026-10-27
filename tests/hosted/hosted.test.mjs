@@ -158,3 +158,17 @@ test('knowledge API requires auth and CSRF, scopes preview and removal by accoun
  assert.equal((await post('knowledge/remove',{id:item.id},{cookie:foreignCookie})).status,404);
  assert.equal((await post('knowledge/remove',{id:item.id})).status,200);
 });
+
+test('semantic API indexing is explicit, CSRF protected, owner scoped and does not expose vectors',async()=>{
+ const {EMBEDDING_DIMENSIONS}=await import('../../netlify/lib/embeddings.mjs');const store=new Store(),environment={AGENTOS_SITE_URL:cfg.origin,AGENTOS_SESSION_SECRET:cfg.secret,GOOGLE_CLIENT_ID:cfg.clientId,GEMINI_API_KEY:cfg.key};let calls=0;
+ const handler=createHandler({storeFactory:()=>store,environment,embeddingOptions:{reserve:async()=>{},embed:async(_cfg,texts)=>{calls++;return texts.map(()=>[1,...Array(EMBEDDING_DIMENSIONS-1).fill(0)]);}}});
+ const user={kind:'session',uid:'a'.repeat(64),jti:'semantic-api',csrf:'csrf-semantic',name:'Test',email:'test@example.com'};await store.setJSON('sessions/'+user.jti,{uid:user.uid,expiresAt:Date.now()+60000});const cookie=`${cookieName(cfg)}=${await sign(user,cfg)}`;
+ const post=(path,data,headers={})=>handler(new Request(cfg.origin+'/api/'+path,{method:'POST',headers:{cookie,origin:cfg.origin,'content-type':'application/json','x-agentos-csrf':user.csrf,...headers},body:JSON.stringify(data)}));
+ const {item}=await (await post('knowledge',{title:'Returns policy',text:'Unwanted purchases may be sent back within thirty days.'})).json();assert.equal(calls,0);
+ assert.equal((await post('knowledge/index',{id:item.id},{'x-agentos-csrf':'wrong'})).status,403);
+ const other={...user,uid:'b'.repeat(64),jti:'semantic-other'};await store.setJSON('sessions/'+other.jti,{uid:other.uid,expiresAt:Date.now()+60000});const otherCookie=`${cookieName(cfg)}=${await sign(other,cfg)}`;
+ assert.equal((await post('knowledge/index',{id:item.id},{cookie:otherCookie})).status,404);assert.equal(calls,0);
+ const indexed=await post('knowledge/index',{id:item.id});assert.equal((await indexed.json()).item.semanticReady,true);assert.equal(calls,1);
+ const preview=await (await post('knowledge/preview',{ids:[item.id],query:'When can customers return merchandise?',semantic:true})).json();assert.equal(preview.sources[0].match,'meaning');assert.ok(!JSON.stringify(preview).includes('vectors'));assert.equal(calls,2);
+ const run=await (await post('runs',{agent:profile,prompt:'When can customers return merchandise?',knowledgeIds:[item.id],knowledgeOnly:true,useSemantic:true})).json();assert.equal(run.knowledge.queryCached,true);assert.equal(calls,2);
+});
