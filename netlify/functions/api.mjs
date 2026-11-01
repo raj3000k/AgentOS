@@ -1,3 +1,4 @@
+import {listRuns,controlRun,removeRun} from '../lib/durability.mjs';
 import {listDocuments,addDocument,removeDocument,retrieveKnowledge,indexDocument} from '../lib/knowledge.mjs';
 import {getStore} from '@netlify/blobs';
 import {settings,HTTPError,cookieName,cookie,nonce,googleLogin,authenticate} from '../lib/auth.mjs';
@@ -35,9 +36,10 @@ export function createHandler({storeFactory=()=>getStore({name:'agentos-demo',co
   if(path==='/api/agents'&&request.method==='POST'){
    const input=await body(request),profile=agentProfile(input.agent),id=randomUUID(),prefix=`users/${session.uid}/agents/`,{blobs}=await store.list({prefix});if(blobs.length>=30)throw new HTTPError(400,'This demo supports up to 30 saved agents per user.');const item={id,...profile,createdAt:new Date().toISOString()};await store.setJSON(prefix+id,item);return send({item});
   }
+  if(path==='/api/runs'&&request.method==='GET')return send({items:await listRuns(store,session.uid)});
   if(path==='/api/runs'&&request.method==='POST')return send(await createRun(store,session,await body(request),Date.now(),{...embeddingOptions,cfg}));
-  const match=path.match(/^\/api\/runs\/([\da-f-]+)(?:\/(step|stop|browser))?$/);
-  if(match){if(request.method==='POST'&&match[2]==='browser')return send(await browserReply(store,session,match[1],await body(request)));if(request.method==='GET'&&!match[2])return send(publicRun((await getRun(store,session.uid,match[1])).data));if(request.method==='POST'&&match[2]==='step')return send(await runStep(store,session,cfg,match[1]));if(request.method==='POST'&&match[2]==='stop')return send(await stopRun(store,session,match[1]));}
+  const match=path.match(/^\/api\/runs\/([\da-f-]+)(?:\/(step|stop|browser|approve|pause|resume|remove))?$/);
+  if(match){if(request.method==='POST'&&['approve','pause','resume'].includes(match[2]))return send(publicRun(await controlRun(store,session,match[1],match[2])));if(request.method==='POST'&&match[2]==='remove'){await removeRun(store,session,match[1]);return send({ok:true});}if(request.method==='POST'&&match[2]==='browser')return send(await browserReply(store,session,match[1],await body(request)));if(request.method==='GET'&&!match[2])return send(publicRun((await getRun(store,session.uid,match[1])).data));if(request.method==='POST'&&match[2]==='step')return send(await runStep(store,session,cfg,match[1]));if(request.method==='POST'&&match[2]==='stop')return send(await stopRun(store,session,match[1]));}
   return send({error:'Not found.'},404);
  }catch(error){if(error instanceof HTTPError)return send({error:error.message,retryAfter:error.retryAfter},error.status,error.retryAfter?{'Retry-After':String(error.retryAfter)}:{});return send({error:'The workspace could not complete this request. Please try again.'},500);}
 };}

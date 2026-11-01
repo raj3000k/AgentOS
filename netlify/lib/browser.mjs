@@ -1,3 +1,4 @@
+import {event} from './durability.mjs';
 import {HTTPError} from './auth.mjs';
 import {safeURL,experience,invoke} from './tools.mjs';
 export function browserCommand(call,state){
@@ -28,7 +29,7 @@ export async function completeBrowser(store,session,id,input,{getRun,runKey,publ
  for(const command of pending.commands)Object.defineProperty(pending.results,command.id,{value:browserResult(command,input.results.find(r=>r.id===command.id).result,run),enumerable:true,configurable:true});
  for(const call of pending.calls.filter(c=>c.function.name==='review_job_results'))pending.results[call.id]=await invoke(call.function.name,JSON.parse(call.function.arguments),run,run.agent.capabilities);
  for(const call of pending.calls){let envelope=pending.results[call.id],content=JSON.stringify(envelope);if(content.length>14000){envelope={ok:false,error:'Browser output exceeded the bounded size.'};content=JSON.stringify(envelope);}run.messages.push({role:'tool',tool_call_id:call.id,content});run.evidence.push({name:call.function.name,result:envelope});run.tool_calls++;}
- delete run.pendingBrowser;run.status='ready';run.activity.push('Connected browser results received.');
+ delete run.pendingBrowser;run.status='ready';run.activity.push('Connected browser results received.');run.checkpoint={number:(run.checkpoint?.number||0)+1,at:now};event(run,'checkpoint_saved','Browser evidence committed. Read results will not be replayed.',now);
  const written=await store.setJSON(runKey(session.uid,id),run,{onlyIfMatch:record.etag,metadata:{expiresAt:run.expiresAt}});
  return publicRun(written.modified?run:(await getRun(store,session.uid,id)).data);
 }

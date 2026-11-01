@@ -57,7 +57,7 @@ test('stopped run prevents further model requests',async()=>{
  assert.equal((await runStep(store,session,cfg,run.id,{model:()=>{throw new Error('must not run');}})).status,'cancelled');
 });
 test('crashed step becomes partial without repeating inference',async()=>{
- const store=new Store(),run=await createRun(store,session,{agent:profile,prompt:'Hi'}),now=Date.now();await store.setJSON(`claims/${session.uid}/${run.id}/0`,{at:now-91000});
+ const store=new Store(),run=await createRun(store,session,{agent:profile,prompt:'Hi'}),now=Date.now();await store.setJSON(`claims/${session.uid}/${run.id}/0`,{at:now-181000});
  const output=await runStep(store,session,cfg,run.id,{now,model:()=>{throw new Error('must not run');}});assert.equal(output.status,'partial');
 });
 test('atomic request pacing and daily caps hold under concurrency',async()=>{
