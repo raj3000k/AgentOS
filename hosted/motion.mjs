@@ -1,8 +1,8 @@
 // Progressive decoration only: native scrolling, no interaction or model state changes.
 export function initMotion(){
  const reduced=matchMedia('(prefers-reduced-motion: reduce)'),fine=matchMedia('(hover: hover) and (pointer: fine)');
- const revealSelector='.platform-heading,.landing-category,.platform-steps article,.hero-copy,.hero-art,.workflow-card,.prompt-suggestions,.knowledge-layout>.brief-composer,.knowledge-library>.library-card';
- const tiltSelector='.landing-category,.workflow-card,.hero-art';
+ const revealSelector='.platform-heading,.landing-category,.platform-steps article,.hero-copy,.hero-art,.prompt-suggestions,.knowledge-layout>.brief-composer,.knowledge-library>.library-card';
+ const tiltSelector='.landing-category,.hero-art';
  const tracked=new WeakSet(),tilts=new Set();let frame=0,pointer=null;
  const progress=document.createElement('div');progress.className='reading-progress';progress.setAttribute('aria-hidden','true');document.body.append(progress);
  const reveal=node=>{node.classList.add('is-visible');observer?.unobserve(node);};
