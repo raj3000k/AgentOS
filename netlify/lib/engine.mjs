@@ -68,7 +68,7 @@ export async function runStep(store,session,cfg,id,{model=chat,tool=invoke,now=D
  event(run,'step_reserved',`Step reserved for model attempt ${run.model_calls}.`,now);
  const locked=await store.setJSON(runKey(session.uid,id),run,{onlyIfMatch:record.etag,metadata:{expiresAt:run.expiresAt}});
  if(!locked.modified){await store.delete(claimKey);return publicRun((await getRun(store,session.uid,id)).data);}
- try{await reserveRequest(store,session,cfg,now);}catch(error){run.model_calls--;run.status='ready';delete run.lease;await settleRun(store,session,run,leaseId);await store.delete(claimKey);throw error;}
+ try{await reserveRequest(store,session,cfg,now);}catch(error){run.model_calls--;run.status='ready';const reserved=run.timeline.at(-1);if(reserved?.type==='step_reserved'){reserved.type='pacing_wait';reserved.label='Model allowance or pacing deferred this step. No model request was sent.';}delete run.lease;await settleRun(store,session,run,leaseId);await store.delete(claimKey);throw error;}
  const checkpointMessages=structuredClone(run.messages);
  const checkpointData=structuredClone({observed:run.observed,jobs:run.jobs,review:run.review,evidence:run.evidence,tool_calls:run.tool_calls});
  const final=run.model_calls>=6||run.tool_calls>=20;
@@ -100,7 +100,7 @@ export async function runStep(store,session,cfg,id,{model=chat,tool=invoke,now=D
   }
  }catch(error){Object.assign(run,checkpointData);run.messages=checkpointMessages;run.status='partial';run.error=error instanceof HTTPError?error.message:'This step could not finish. Collected evidence is retained.';run.answer=partialAnswer(run,run.error);run.activity.push('Run stopped with partial results.');}
  if(JSON.stringify(run.messages).length>150000&&run.status==='ready'){run.status='partial';run.contextFull=true;run.answer=partialAnswer(run,'Context limit reached. Narrow the task.');}
- if(['ready','waiting_browser','completed','budget_summary'].includes(run.status)){run.checkpoint={number:(run.checkpoint?.number||0)+1,at:now};event(run,'checkpoint_saved',`Checkpoint ${run.checkpoint.number} saved · ${run.evidence.length} evidence records.`,now);}
+ if(['ready','waiting_browser','completed','budget_summary'].includes(run.status)){const finishedAt=Math.max(now,Date.now());run.checkpoint={number:(run.checkpoint?.number||0)+1,at:finishedAt};event(run,'checkpoint_saved',`Checkpoint ${run.checkpoint.number} saved · ${run.evidence.length} evidence records.`,finishedAt);}
  else event(run,'interrupted','Attempt stopped. Saved evidence is available for review.',now);
  return publicRun(await settleRun(store,session,run,leaseId));
 }

@@ -6,7 +6,7 @@ The hosted adapter is separate from the dependency-free Python runtime. Netlify 
 
 ## Branches and deployment
 
-`main` is development. `prod` is the production snapshot. Build with `npm ci && npm run test:hosted && npm run build`. From the tested `prod` snapshot, deploy with `npx netlify-cli deploy --build --prod`. The linked site is recorded only in ignored `.netlify/state.json`. CLI/manual deployment is used; automatic Git deployments are not configured. Never deploy directly from an unreviewed development checkout.
+`main` is development. `prod` is the production snapshot. Build with `npm ci && npm run test:hosted && npm run build`. Fast-forward the local production branch with `git switch prod && git merge --ff-only origin/prod`, verify its commit matches the tested release, then deploy with `npx netlify-cli deploy --build --prod`. The linked site is recorded only in ignored `.netlify/state.json`. CLI/manual deployment is used; automatic Git deployments are not configured. Never deploy directly from an unreviewed development checkout.
 
 ## Google setup (required before sign-in works)
 

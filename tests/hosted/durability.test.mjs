@@ -42,7 +42,7 @@ test('pause during inference defers an unstarted tool batch and saves a resumabl
  const store=new Store(),run=await createRun(store,session,{agent,prompt:'2+2'}),started=deferred(),finish=deferred();let tools=0;
  const step=runStep(store,session,cfg,run.id,{model:async()=>{started.resolve();return await finish.promise;},tool:async()=>{tools++;return {ok:true,result:4};}});await started.promise;
  const paused=await controlRun(store,session,run.id,'pause');assert.equal(paused.pauseRequested,true);
- finish.resolve(await modelTool());const result=await step;assert.equal(result.status,'paused');assert.equal(tools,0);assert.equal(result.model_calls,1);assert.ok(result.workflow.timeline.some(e=>e.type==='pause_requested'));
+ finish.resolve(await modelTool());const result=await step;assert.equal(result.status,'paused');assert.equal(tools,0);assert.equal(result.model_calls,1);assert.ok(result.workflow.timeline.some(e=>e.type==='pause_requested'));assert.ok(result.workflow.timeline.findIndex(e=>e.type==='pause_requested')<result.workflow.timeline.findIndex(e=>e.type==='checkpoint_saved'));
  assert.equal((await getRun(store,session.uid,run.id)).data.messages.some(m=>m.role==='assistant'),false);
 });
 test('pause during a tool read commits its result and does not replay it on resume',async()=>{
@@ -73,7 +73,7 @@ test('quota pacing restores ready checkpoint without consuming a model attempt',
  const store=new Store(),run=await createRun(store,session,{agent,prompt:'2+2'}),other=await createRun(store,session,{agent,prompt:'2+2'}),now=Date.now();
  await runStep(store,session,cfg,other.id,{now,model:async()=>({role:'assistant',content:'4'})});
  await assert.rejects(runStep(store,session,cfg,run.id,{now,model:()=>{throw Error('must not run');}}),e=>e.status===429);
- const ready=(await getRun(store,session.uid,run.id)).data;assert.equal(ready.model_calls,0);assert.equal(ready.status,'ready');assert.equal(ready.lease,undefined);
+ const ready=(await getRun(store,session.uid,run.id)).data;assert.equal(ready.model_calls,0);assert.equal(ready.status,'ready');assert.equal(ready.lease,undefined);assert.equal(ready.timeline.at(-1).type,'pacing_wait');
  assert.equal((await runStep(store,session,cfg,run.id,{now:now+7000,model:async()=>({role:'assistant',content:'4'})})).status,'completed');
 });
 test('browser pause closes pending transcript safely; resume does not restore tab permission',async()=>{
